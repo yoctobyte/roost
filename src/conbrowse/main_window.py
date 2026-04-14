@@ -1,16 +1,17 @@
 import gi
 
 gi.require_version("Gtk", "3.0")
+gi.require_version("Gdk", "3.0")
 
-from gi.repository import Gdk, Gtk  # noqa: E402
+from gi.repository import Gdk, Gtk, Pango  # noqa: E402
 
 from conbrowse.controller import Controller
-from conbrowse.models import AppState
+from conbrowse.models import AppState, WindowInfo
 from conbrowse.overview_page import OverviewPage
 from conbrowse.terminal_page import TerminalPage
 
-_OVERVIEW_PAGE = 0
-_TERMINAL_PAGE = 1
+_STACK_OVERVIEW = "overview"
+_STACK_TERMINAL = "terminal"
 
 
 class MainWindow(Gtk.ApplicationWindow):
@@ -19,8 +20,9 @@ class MainWindow(Gtk.ApplicationWindow):
         self.set_default_size(1100, 750)
 
         self._controller = controller
-        self._suppress_tab_switch = False
         self._session_lost_shown = False
+        self._window_buttons: dict[str, Gtk.ToggleButton] = {}
+        self._updating_buttons = False
 
         self._build_header()
         self._build_body()
@@ -28,6 +30,8 @@ class MainWindow(Gtk.ApplicationWindow):
 
         controller.on_state_changed(self._on_state_changed)
         controller.on_error(self._on_error)
+
+        self._on_state_changed(controller.state)
 
         self.connect("destroy", self._on_destroy)
 
@@ -64,21 +68,44 @@ class MainWindow(Gtk.ApplicationWindow):
         header.pack_end(self._btn_refresh)
 
     def _build_body(self) -> None:
-        self._notebook = Gtk.Notebook()
-        self._notebook.set_scrollable(True)
-        self.add(self._notebook)
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self.add(outer)
+
+        self._tab_strip = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=2)
+        self._tab_strip.set_margin_top(4)
+        self._tab_strip.set_margin_bottom(4)
+        self._tab_strip.set_margin_start(6)
+        self._tab_strip.set_margin_end(6)
+
+        scrolled_strip = Gtk.ScrolledWindow()
+        scrolled_strip.set_policy(Gtk.PolicyType.EXTERNAL, Gtk.PolicyType.NEVER)
+        scrolled_strip.add(self._tab_strip)
+        outer.pack_start(scrolled_strip, False, False, 0)
+
+        outer.pack_start(
+            Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL), False, False, 0
+        )
+
+        self._overview_button = Gtk.ToggleButton(label="Overview")
+        self._overview_button.connect(
+            "toggled", self._on_overview_button_toggled
+        )
+        self._tab_strip.pack_start(self._overview_button, False, False, 0)
+
+        self._stack = Gtk.Stack()
+        self._stack.set_transition_type(Gtk.StackTransitionType.NONE)
+        outer.pack_start(self._stack, True, True, 0)
 
         self._overview = OverviewPage(self._on_card_activated)
-        self._notebook.append_page(self._overview, Gtk.Label(label="Overview"))
+        self._stack.add_named(self._overview, _STACK_OVERVIEW)
 
         self._terminal = TerminalPage(
             session=self._controller.session,
             on_child_exited=self._on_terminal_child_exited,
         )
-        self._terminal_label = Gtk.Label(label="Console")
-        self._notebook.append_page(self._terminal, self._terminal_label)
+        self._stack.add_named(self._terminal, _STACK_TERMINAL)
 
-        self._notebook.connect("switch-page", self._on_page_switched)
+        self._show_overview()
 
     def _build_accelerators(self) -> None:
         group = Gtk.AccelGroup()
@@ -102,10 +129,11 @@ class MainWindow(Gtk.ApplicationWindow):
 
     def _action_new(self) -> None:
         self._controller.new_console()
-        self._notebook.set_current_page(_TERMINAL_PAGE)
+        self._show_terminal()
 
     def _action_overview(self) -> None:
-        self._notebook.set_current_page(_OVERVIEW_PAGE)
+        self._controller.clear_selection()
+        self._show_overview()
 
     def _action_refresh(self) -> None:
         self._controller.sync_now()
@@ -124,27 +152,91 @@ class MainWindow(Gtk.ApplicationWindow):
         if win is None:
             return
         self._controller.close_console(win.id)
-        self._notebook.set_current_page(_OVERVIEW_PAGE)
+        self._show_overview()
 
     # -- events -----------------------------------------------------------
 
     def _on_card_activated(self, window_id: str) -> None:
         self._controller.select(window_id)
-        self._notebook.set_current_page(_TERMINAL_PAGE)
-        self._terminal.grab_focus()
+        self._show_terminal()
 
-    def _on_page_switched(self, _notebook, _page, page_num: int) -> None:
-        if self._suppress_tab_switch:
+    def _on_overview_button_toggled(self, button: Gtk.ToggleButton) -> None:
+        if self._updating_buttons:
             return
-        if page_num == _OVERVIEW_PAGE:
+        if button.get_active():
             self._controller.clear_selection()
+            self._show_overview()
         else:
-            self._terminal.grab_focus()
+            # Re-assert overview toggle if user is clicking it off without
+            # selecting a window tab.
+            if self._controller.state.selected_id is None:
+                self._updating_buttons = True
+                button.set_active(True)
+                self._updating_buttons = False
+
+    def _on_window_button_toggled(
+        self, button: Gtk.ToggleButton, window_id: str
+    ) -> None:
+        if self._updating_buttons:
+            return
+        if button.get_active():
+            self._controller.select(window_id)
+            self._show_terminal()
 
     def _on_state_changed(self, state: AppState) -> None:
         self._overview.set_state(state)
-        win = state.by_id(state.selected_id) if state.selected_id else None
-        self._terminal_label.set_text(win.name if win else "Console")
+        self._rebuild_window_buttons(state)
+        selected = state.by_id(state.selected_id) if state.selected_id else None
+        self._sync_button_state(selected)
+        if selected is None:
+            self._show_overview()
+
+    def _rebuild_window_buttons(self, state: AppState) -> None:
+        seen: set[str] = set()
+        for win in state.windows:
+            seen.add(win.id)
+            btn = self._window_buttons.get(win.id)
+            label = f"{win.index}: {win.name}"
+            if btn is None:
+                btn = Gtk.ToggleButton(label=label)
+                btn.connect("toggled", self._on_window_button_toggled, win.id)
+                lbl = btn.get_child()
+                if isinstance(lbl, Gtk.Label):
+                    lbl.set_ellipsize(Pango.EllipsizeMode.END)
+                    lbl.set_max_width_chars(24)
+                self._tab_strip.pack_start(btn, False, False, 0)
+                self._window_buttons[win.id] = btn
+            else:
+                inner = btn.get_child()
+                if isinstance(inner, Gtk.Label):
+                    inner.set_text(label)
+        for stale in list(self._window_buttons):
+            if stale in seen:
+                continue
+            btn = self._window_buttons.pop(stale)
+            btn.destroy()
+        self._tab_strip.show_all()
+
+    def _sync_button_state(self, selected: WindowInfo | None) -> None:
+        self._updating_buttons = True
+        try:
+            self._overview_button.set_active(selected is None)
+            for wid, btn in self._window_buttons.items():
+                btn.set_active(selected is not None and wid == selected.id)
+        finally:
+            self._updating_buttons = False
+
+    def _show_overview(self) -> None:
+        self._stack.set_visible_child_name(_STACK_OVERVIEW)
+        self._updating_buttons = True
+        self._overview_button.set_active(True)
+        for btn in self._window_buttons.values():
+            btn.set_active(False)
+        self._updating_buttons = False
+
+    def _show_terminal(self) -> None:
+        self._stack.set_visible_child_name(_STACK_TERMINAL)
+        self._terminal.grab_focus()
 
     def _on_error(self, message: str) -> None:
         if "no server" in message or "can't find session" in message:
