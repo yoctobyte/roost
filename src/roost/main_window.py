@@ -37,6 +37,10 @@ class MainWindow(Gtk.ApplicationWindow):
         controller.on_state_changed(self._on_state_changed)
         controller.on_error(self._on_error)
 
+        # When the main window regains focus and the terminal page is
+        # visible, forward focus to the VTE so function keys land there.
+        self.connect("focus-in-event", self._on_window_focus_in)
+
         self._on_state_changed(controller.state)
 
         self.connect("destroy", self._on_destroy)
@@ -116,6 +120,7 @@ class MainWindow(Gtk.ApplicationWindow):
 
         self._overview_button = Gtk.ToggleButton(label="Overview")
         self._overview_button.set_tooltip_text("Show overview of all consoles")
+        self._overview_button.set_can_focus(False)
         self._overview_button.connect(
             "toggled", self._on_overview_button_toggled
         )
@@ -248,6 +253,7 @@ class MainWindow(Gtk.ApplicationWindow):
             tooltip = _format_tooltip(win)
             if btn is None:
                 btn = Gtk.ToggleButton(label=label)
+                btn.set_can_focus(False)
                 btn.connect("toggled", self._on_window_button_toggled, win.id)
                 inner = btn.get_child()
                 if isinstance(inner, Gtk.Label):
@@ -328,6 +334,11 @@ class MainWindow(Gtk.ApplicationWindow):
         dialog.destroy()
         self.destroy()
 
+    def _on_window_focus_in(self, _widget, _event) -> bool:
+        if self._stack.get_visible_child_name() == _STACK_TERMINAL:
+            self._terminal.grab_focus()
+        return False
+
     def _on_destroy(self, _widget) -> None:
         self._controller.stop()
 
@@ -352,6 +363,7 @@ def _hbtn(icon_name: str, tooltip: str, handler) -> Gtk.Button:
     btn = Gtk.Button()
     btn.set_image(Gtk.Image.new_from_icon_name(icon_name, Gtk.IconSize.BUTTON))
     btn.set_tooltip_text(tooltip)
+    btn.set_can_focus(False)
     btn.connect("clicked", lambda *_: handler())
     return btn
 

@@ -34,9 +34,16 @@ def session_exists(name: str) -> bool:
 
 
 def ensure_session(name: str) -> None:
-    if session_exists(name):
-        return
-    _run(["new-session", "-d", "-s", name])
+    if not session_exists(name):
+        _run(["new-session", "-d", "-s", name])
+    # Session-scoped mouse mode: wheel scrolls tmux history (copy-mode)
+    # and PgUp/PgDn work after the prefix. Scoped so it does not touch
+    # other tmux sessions on the same server.
+    for opt, val in (("mouse", "on"),):
+        try:
+            _run(["set-option", "-t", f"={name}", opt, val])
+        except TmuxError:
+            pass
 
 
 def kill_session(name: str) -> None:

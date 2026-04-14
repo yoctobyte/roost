@@ -45,7 +45,13 @@ class TerminalPage(Gtk.Box):
         self._vte.connect("button-press-event", self._on_button_press)
 
     def grab_focus(self) -> None:  # type: ignore[override]
+        # Defer to the idle loop so grab happens after any in-flight
+        # focus-stealing from button clicks / page switches.
+        GLib.idle_add(self._grab_focus_idle)
+
+    def _grab_focus_idle(self) -> bool:
         self._vte.grab_focus()
+        return False
 
     def apply_theme(self, fg_hex: str, bg_hex: str) -> None:
         fg = Gdk.RGBA()
