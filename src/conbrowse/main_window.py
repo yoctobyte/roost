@@ -5,10 +5,13 @@ gi.require_version("Gdk", "3.0")
 
 from gi.repository import Gdk, Gtk, Pango  # noqa: E402
 
+from conbrowse import settings as settings_module
 from conbrowse.config import TAB_LABEL_MAX_CHARS, TAB_STRIP_MULTIROW
 from conbrowse.controller import Controller
 from conbrowse.models import AppState, WindowInfo
 from conbrowse.overview_page import OverviewPage
+from conbrowse.settings import Settings
+from conbrowse.settings_dialog import SettingsDialog
 from conbrowse.terminal_page import TerminalPage
 
 _STACK_OVERVIEW = "overview"
@@ -21,6 +24,7 @@ class MainWindow(Gtk.ApplicationWindow):
         self.set_default_size(1100, 750)
 
         self._controller = controller
+        self._settings: Settings = settings_module.load()
         self._session_lost_shown = False
         self._window_buttons: dict[str, Gtk.ToggleButton] = {}
         self._updating_buttons = False
@@ -68,6 +72,13 @@ class MainWindow(Gtk.ApplicationWindow):
         )
         header.pack_end(self._btn_refresh)
 
+        self._btn_prefs = _hbtn(
+            "preferences-system-symbolic",
+            "Preferences",
+            self._action_preferences,
+        )
+        header.pack_end(self._btn_prefs)
+
     def _build_body(self) -> None:
         outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self.add(outer)
@@ -113,13 +124,15 @@ class MainWindow(Gtk.ApplicationWindow):
         self._stack.set_transition_type(Gtk.StackTransitionType.NONE)
         outer.pack_start(self._stack, True, True, 0)
 
-        self._overview = OverviewPage(self._on_card_activated)
+        self._overview = OverviewPage(self._on_card_activated, self._settings)
         self._stack.add_named(self._overview, _STACK_OVERVIEW)
 
         self._terminal = TerminalPage(
             session=self._controller.session,
             on_child_exited=self._on_terminal_child_exited,
         )
+        theme = self._settings.theme_obj()
+        self._terminal.apply_theme(theme.fg, theme.bg)
         self._stack.add_named(self._terminal, _STACK_TERMINAL)
 
         self._show_overview()
@@ -154,6 +167,23 @@ class MainWindow(Gtk.ApplicationWindow):
 
     def _action_refresh(self) -> None:
         self._controller.sync_now()
+
+    def _action_preferences(self) -> None:
+        dialog = SettingsDialog(self, self._settings)
+        try:
+            response = dialog.run()
+            if response == Gtk.ResponseType.OK:
+                new = dialog.get_settings()
+                self._settings = new
+                settings_module.save(new)
+                self._apply_settings()
+        finally:
+            dialog.destroy()
+
+    def _apply_settings(self) -> None:
+        self._overview.apply_settings(self._settings)
+        theme = self._settings.theme_obj()
+        self._terminal.apply_theme(theme.fg, theme.bg)
 
     def _action_rename(self) -> None:
         win = self._controller.selected_window()

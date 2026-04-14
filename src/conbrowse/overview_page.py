@@ -4,22 +4,24 @@ import gi
 
 gi.require_version("Gtk", "3.0")
 
-from gi.repository import Gtk, Pango  # noqa: E402
+from gi.repository import Gdk, Gtk, Pango  # noqa: E402
 
-from conbrowse.config import (
-    OVERVIEW_CARD_HEIGHT,
-    OVERVIEW_CARD_WIDTH,
-    OVERVIEW_PREVIEW_FONT,
-)
+from conbrowse.config import OVERVIEW_CARD_HEIGHT, OVERVIEW_CARD_WIDTH
 from conbrowse.models import AppState, WindowInfo
+from conbrowse.settings import Settings
 
 
 class OverviewPage(Gtk.ScrolledWindow):
-    def __init__(self, on_activate: Callable[[str], None]) -> None:
+    def __init__(
+        self,
+        on_activate: Callable[[str], None],
+        settings: Settings,
+    ) -> None:
         super().__init__()
         self.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
 
         self._on_activate = on_activate
+        self._settings = settings
         self._flow = Gtk.FlowBox()
         self._flow.set_valign(Gtk.Align.START)
         self._flow.set_max_children_per_line(4)
@@ -35,6 +37,22 @@ class OverviewPage(Gtk.ScrolledWindow):
         self.add(self._flow)
 
         self._cards: dict[str, _Card] = {}
+        self._apply_bg()
+
+    def apply_settings(self, settings: Settings) -> None:
+        self._settings = settings
+        self._apply_bg()
+        for card in self._cards.values():
+            card.apply_settings(settings)
+
+    def _apply_bg(self) -> None:
+        theme = self._settings.theme_obj()
+        rgba = Gdk.RGBA()
+        rgba.parse(theme.bg)
+        self._flow.override_background_color(Gtk.StateFlags.NORMAL, rgba)
+        viewport = self._flow.get_parent()
+        if isinstance(viewport, Gtk.Viewport):
+            viewport.override_background_color(Gtk.StateFlags.NORMAL, rgba)
 
     def set_state(self, state: AppState) -> None:
         seen: set[str] = set()
@@ -42,7 +60,7 @@ class OverviewPage(Gtk.ScrolledWindow):
             seen.add(w.id)
             card = self._cards.get(w.id)
             if card is None:
-                card = _Card(w, self._on_activate)
+                card = _Card(w, self._on_activate, self._settings)
                 self._cards[w.id] = card
                 self._flow.add(card)
             else:
@@ -58,7 +76,12 @@ class OverviewPage(Gtk.ScrolledWindow):
 
 
 class _Card(Gtk.EventBox):
-    def __init__(self, info: WindowInfo, on_activate: Callable[[str], None]) -> None:
+    def __init__(
+        self,
+        info: WindowInfo,
+        on_activate: Callable[[str], None],
+        settings: Settings,
+    ) -> None:
         super().__init__()
         self._window_id = info.id
         self._on_activate = on_activate
@@ -73,6 +96,8 @@ class _Card(Gtk.EventBox):
         box.set_margin_start(8)
         box.set_margin_end(8)
         frame.add(box)
+        self._frame = frame
+        self._box = box
 
         self._title = Gtk.Label(xalign=0.0)
         self._title.set_ellipsize(Pango.EllipsizeMode.END)
@@ -86,14 +111,28 @@ class _Card(Gtk.EventBox):
         self._preview.set_single_line_mode(False)
         self._preview.set_selectable(False)
         self._preview.set_ellipsize(Pango.EllipsizeMode.NONE)
-        font = Pango.FontDescription.from_string(OVERVIEW_PREVIEW_FONT)
-        self._preview.override_font(font)
         self._preview.set_size_request(OVERVIEW_CARD_WIDTH, OVERVIEW_CARD_HEIGHT)
         box.pack_start(self._preview, True, True, 0)
 
+        self.apply_settings(settings)
         self.update(info)
 
         self.connect("button-press-event", self._on_click)
+
+    def apply_settings(self, settings: Settings) -> None:
+        font = Pango.FontDescription.from_string(
+            f"Monospace {settings.overview_font_size}"
+        )
+        self._preview.override_font(font)
+        theme = settings.theme_obj()
+        fg = Gdk.RGBA()
+        fg.parse(theme.fg)
+        bg = Gdk.RGBA()
+        bg.parse(theme.bg)
+        for widget in (self, self._frame, self._box):
+            widget.override_background_color(Gtk.StateFlags.NORMAL, bg)
+        self._title.override_color(Gtk.StateFlags.NORMAL, fg)
+        self._preview.override_color(Gtk.StateFlags.NORMAL, fg)
 
     def update(self, info: WindowInfo) -> None:
         marker = " *" if info.active else ""
