@@ -1,5 +1,6 @@
 import json
 import os
+import zlib
 from dataclasses import asdict, dataclass, field, fields
 
 
@@ -43,47 +44,127 @@ DEFAULT_OVERVIEW_FONT_SIZE = 4
 MIN_FONT_SIZE = 2
 MAX_FONT_SIZE = 14
 DEFAULT_REMEMBER_TABS = True
+DEFAULT_AUTO_COLOR_TABS = True
 
 
 @dataclass
 class Settings:
     overview_font_size: int = DEFAULT_OVERVIEW_FONT_SIZE
     theme: str = DEFAULT_THEME
-    # Map of window name -> TAB_COLORS key. Keyed by name (not tmux
-    # window-id) so colors survive session recreation; collisions on
-    # rename are accepted as a feature.
-    tab_colors: dict = field(default_factory=dict)
+    # Map of cwd prefix -> TAB_COLORS key. Explicit colors are resolved
+    # by longest-prefix match against a tab's current working directory,
+    # so setting a color on /home/me/projects/foo carries into its
+    # subdirectories and any shell that cd's deeper keeps the color.
+    cwd_colors: dict = field(default_factory=dict)
+    # When true, tabs without an explicit cwd_colors entry get a
+    # deterministic color derived from the project root of their cwd.
+    auto_color_tabs: bool = DEFAULT_AUTO_COLOR_TABS
     remember_tabs: bool = DEFAULT_REMEMBER_TABS
 
     def clamp(self) -> "Settings":
         size = max(MIN_FONT_SIZE, min(MAX_FONT_SIZE, int(self.overview_font_size)))
         theme = self.theme if self.theme in THEMES else DEFAULT_THEME
         colors = {
-            str(k): str(v)
-            for k, v in (self.tab_colors or {}).items()
-            if str(v) in TAB_COLORS
+            os.path.normpath(str(k)): str(v)
+            for k, v in (self.cwd_colors or {}).items()
+            if str(v) in TAB_COLORS and str(k)
         }
         return Settings(
             overview_font_size=size,
             theme=theme,
-            tab_colors=colors,
+            cwd_colors=colors,
+            auto_color_tabs=bool(self.auto_color_tabs),
             remember_tabs=bool(self.remember_tabs),
         )
 
     def theme_obj(self) -> Theme:
         return THEMES[self.theme if self.theme in THEMES else DEFAULT_THEME]
 
-    def tab_color(self, window_name: str) -> TabColor | None:
-        key = self.tab_colors.get(window_name)
-        if key is None:
+    def resolve_tab_color(self, cwd: str) -> TabColor | None:
+        if not cwd:
             return None
-        return TAB_COLORS.get(key)
+        cwd_n = os.path.normpath(cwd)
+        best_prefix = ""
+        best_key: str | None = None
+        for prefix, key in self.cwd_colors.items():
+            if cwd_n == prefix or cwd_n.startswith(prefix.rstrip("/") + "/"):
+                if len(prefix) > len(best_prefix):
+                    best_prefix = prefix
+                    best_key = key
+        if best_key is not None:
+            return TAB_COLORS.get(best_key)
+        if self.auto_color_tabs:
+            return TAB_COLORS[_auto_color_key(cwd_n)]
+        return None
 
-    def set_tab_color(self, window_name: str, color_key: str | None) -> None:
+    def explicit_color_for(self, cwd: str) -> tuple[str, str] | None:
+        """Return (prefix, color_key) of the longest explicit match."""
+        if not cwd:
+            return None
+        cwd_n = os.path.normpath(cwd)
+        best_prefix = ""
+        best_key: str | None = None
+        for prefix, key in self.cwd_colors.items():
+            if cwd_n == prefix or cwd_n.startswith(prefix.rstrip("/") + "/"):
+                if len(prefix) > len(best_prefix):
+                    best_prefix = prefix
+                    best_key = key
+        if best_key is None:
+            return None
+        return best_prefix, best_key
+
+    def set_cwd_color(self, cwd: str, color_key: str | None) -> None:
+        if not cwd:
+            return
+        key_path = os.path.normpath(cwd)
         if color_key is None or color_key not in TAB_COLORS:
-            self.tab_colors.pop(window_name, None)
+            self.cwd_colors.pop(key_path, None)
         else:
-            self.tab_colors[window_name] = color_key
+            self.cwd_colors[key_path] = color_key
+
+
+_KNOWN_PARENTS = {
+    "projects", "project", "src", "source", "code", "work", "workspace",
+    "dev", "repos", "repo", "git", "github", "gitlab", "Documents",
+    "Downloads", "Code",
+}
+
+
+def project_root(cwd: str) -> str:
+    """Best-effort project-root derivation, no filesystem I/O.
+
+    If the first path component is a known container directory
+    ("projects", "src", "code", ...) we use two components so that
+    sibling projects get distinct roots. Otherwise one component.
+    """
+    if not cwd:
+        return ""
+    cwd = os.path.normpath(cwd)
+    home = os.path.expanduser("~")
+    if cwd == home or cwd == "/":
+        return cwd
+    if cwd.startswith(home + "/"):
+        rest = cwd[len(home) + 1 :]
+        parts = rest.split("/")
+        if not parts or not parts[0]:
+            return home
+        first = parts[0]
+        if first in _KNOWN_PARENTS and len(parts) >= 2:
+            return os.path.join(home, first, parts[1])
+        return os.path.join(home, first)
+    parts = cwd.strip("/").split("/")
+    if not parts:
+        return cwd
+    if parts[0] in _KNOWN_PARENTS and len(parts) >= 2:
+        return "/" + "/".join(parts[:2])
+    return "/" + parts[0]
+
+
+def _auto_color_key(cwd: str) -> str:
+    root = project_root(cwd) or cwd
+    keys = list(TAB_COLORS.keys())
+    h = zlib.crc32(root.encode("utf-8", "replace"))
+    return keys[h % len(keys)]
 
 
 def settings_path() -> str:

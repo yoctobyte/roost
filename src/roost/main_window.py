@@ -13,9 +13,11 @@ from roost.controller import Controller
 from roost.models import AppState, WindowInfo
 from roost.overview_page import OverviewPage
 from roost.restore_dialog import RestoreDialog
-from roost.settings import TAB_COLORS, Settings
+from roost.settings import TAB_COLORS, Settings, project_root
 from roost.settings_dialog import SettingsDialog
 from roost.terminal_page import TerminalPage
+
+_TAB_DND_TARGET = "application/x-roost-tab"
 
 _STACK_OVERVIEW = "overview"
 _STACK_TERMINAL = "terminal"
@@ -276,6 +278,7 @@ class MainWindow(Gtk.ApplicationWindow):
                 if isinstance(inner, Gtk.Label):
                     inner.set_ellipsize(Pango.EllipsizeMode.END)
                     inner.set_max_width_chars(TAB_LABEL_MAX_CHARS)
+                self._install_tab_dnd(btn, win.id)
                 self._tab_strip.add(btn)
                 self._window_buttons[win.id] = btn
             else:
@@ -283,7 +286,7 @@ class MainWindow(Gtk.ApplicationWindow):
                 if isinstance(inner, Gtk.Label):
                     inner.set_text(label)
             btn.set_tooltip_text(tooltip)
-            self._apply_tab_color(btn, win.id, win.name)
+            self._apply_tab_color(btn, win.id, win.current_path)
         for stale in list(self._window_buttons):
             if stale in seen:
                 continue
@@ -354,9 +357,9 @@ class MainWindow(Gtk.ApplicationWindow):
         self.destroy()
 
     def _apply_tab_color(
-        self, btn: Gtk.ToggleButton, window_id: str, window_name: str
+        self, btn: Gtk.ToggleButton, window_id: str, cwd: str
     ) -> None:
-        color = self._settings.tab_color(window_name)
+        color = self._settings.resolve_tab_color(cwd)
         ctx = btn.get_style_context()
         provider = self._button_css.get(window_id)
         if provider is not None:
@@ -374,6 +377,45 @@ class MainWindow(Gtk.ApplicationWindow):
         provider.load_from_data(css)
         ctx.add_provider(provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
         self._button_css[window_id] = provider
+
+    def _install_tab_dnd(self, btn: Gtk.ToggleButton, window_id: str) -> None:
+        targets = Gtk.TargetList.new([])
+        targets.add(
+            Gdk.Atom.intern(_TAB_DND_TARGET, False),
+            Gtk.TargetFlags.SAME_APP,
+            0,
+        )
+        btn.drag_source_set(
+            Gdk.ModifierType.BUTTON1_MASK,
+            [],
+            Gdk.DragAction.MOVE,
+        )
+        btn.drag_source_set_target_list(targets)
+        btn.drag_dest_set(
+            Gtk.DestDefaults.ALL,
+            [],
+            Gdk.DragAction.MOVE,
+        )
+        btn.drag_dest_set_target_list(targets)
+        btn.connect("drag-data-get", self._on_tab_drag_data_get, window_id)
+        btn.connect(
+            "drag-data-received", self._on_tab_drag_data_received, window_id
+        )
+
+    def _on_tab_drag_data_get(
+        self, _btn, _ctx, data, _info, _time, window_id: str
+    ) -> None:
+        data.set(data.get_target(), 8, window_id.encode("utf-8"))
+
+    def _on_tab_drag_data_received(
+        self, _btn, _ctx, _x, _y, data, _info, _time, target_id: str
+    ) -> None:
+        raw = data.get_data()
+        if not raw:
+            return
+        source_id = raw.decode("utf-8", "replace")
+        if source_id and source_id != target_id:
+            self._controller.move_to(source_id, target_id)
 
     def _on_tab_button_press(self, _btn, event, window_id: str) -> bool:
         if event.type != Gdk.EventType.BUTTON_PRESS:
@@ -399,30 +441,42 @@ class MainWindow(Gtk.ApplicationWindow):
 
         menu.append(Gtk.SeparatorMenuItem())
 
-        ordered = sorted(self._controller.state.windows, key=lambda w: w.index)
-        pos = next((i for i, w in enumerate(ordered) if w.id == win.id), -1)
+        # Color is keyed by the working folder (and its subdirectories),
+        # not by the tab name. Apply colors to the project root by
+        # default; the user can also bind the exact current cwd.
+        color_item = Gtk.MenuItem(label="Color folder")
+        color_item.set_submenu(self._build_color_menu(win))
+        menu.append(color_item)
 
-        move_left = Gtk.MenuItem(label="Move left")
-        move_left.set_sensitive(pos > 0)
-        move_left.connect("activate", lambda *_: self._controller.move_console(win.id, -1))
-        menu.append(move_left)
+        menu.show_all()
+        menu.attach_to_widget(self, None)
+        menu.popup_at_pointer(event)
 
-        move_right = Gtk.MenuItem(label="Move right")
-        move_right.set_sensitive(0 <= pos < len(ordered) - 1)
-        move_right.connect("activate", lambda *_: self._controller.move_console(win.id, 1))
-        menu.append(move_right)
-
-        menu.append(Gtk.SeparatorMenuItem())
-
-        color_item = Gtk.MenuItem(label="Color")
+    def _build_color_menu(self, win: WindowInfo) -> Gtk.Menu:
         color_menu = Gtk.Menu()
-        current_key = self._settings.tab_colors.get(win.name)
-        none_item = Gtk.CheckMenuItem(label="None")
+
+        cwd = win.current_path or ""
+        root = project_root(cwd) if cwd else ""
+        explicit = self._settings.explicit_color_for(cwd) if cwd else None
+        current_prefix = explicit[0] if explicit else None
+        current_key = explicit[1] if explicit else None
+
+        # Header: show which path this color will be attached to.
+        header_path = root or cwd or "(no folder)"
+        header = Gtk.MenuItem(label=f"Apply to: {_short_home(header_path)}")
+        header.set_sensitive(False)
+        color_menu.append(header)
+        color_menu.append(Gtk.SeparatorMenuItem())
+
+        none_item = Gtk.CheckMenuItem(label="None (use auto / inherit)")
         none_item.set_draw_as_radio(True)
         none_item.set_active(current_key is None)
-        none_item.connect("activate", lambda *_: self._tab_set_color(win, None))
+        none_item.connect(
+            "activate", lambda *_: self._tab_clear_color(win, current_prefix)
+        )
         color_menu.append(none_item)
         color_menu.append(Gtk.SeparatorMenuItem())
+
         for key, tc in TAB_COLORS.items():
             item = Gtk.CheckMenuItem(label=tc.name)
             item.set_draw_as_radio(True)
@@ -432,35 +486,41 @@ class MainWindow(Gtk.ApplicationWindow):
                 lambda _w, k=key: self._tab_set_color(win, k),
             )
             color_menu.append(item)
-        color_item.set_submenu(color_menu)
-        menu.append(color_item)
 
-        menu.show_all()
-        menu.attach_to_widget(self, None)
-        menu.popup_at_pointer(event)
+        return color_menu
 
     def _tab_rename(self, win: WindowInfo) -> None:
         new = _prompt(self, "Rename console", "New name:", win.name)
         if new is None or not new.strip():
             return
-        old_name = win.name
-        new_name = new.strip()
-        color_key = self._settings.tab_colors.get(old_name)
-        if color_key is not None:
-            self._settings.set_tab_color(old_name, None)
-            self._settings.set_tab_color(new_name, color_key)
-            settings_module.save(self._settings)
-        self._controller.rename_console(win.id, new_name)
+        self._controller.rename_console(win.id, new.strip())
 
     def _tab_close(self, win: WindowInfo) -> None:
         self._controller.close_console(win.id)
 
-    def _tab_set_color(self, win: WindowInfo, color_key: str | None) -> None:
-        self._settings.set_tab_color(win.name, color_key)
+    def _tab_set_color(self, win: WindowInfo, color_key: str) -> None:
+        cwd = win.current_path or ""
+        target = project_root(cwd) if cwd else ""
+        if not target:
+            return
+        self._settings.set_cwd_color(target, color_key)
         settings_module.save(self._settings)
-        btn = self._window_buttons.get(win.id)
-        if btn is not None:
-            self._apply_tab_color(btn, win.id, win.name)
+        self._refresh_all_tab_colors()
+
+    def _tab_clear_color(
+        self, win: WindowInfo, explicit_prefix: str | None
+    ) -> None:
+        if explicit_prefix:
+            self._settings.set_cwd_color(explicit_prefix, None)
+            settings_module.save(self._settings)
+            self._refresh_all_tab_colors()
+
+    def _refresh_all_tab_colors(self) -> None:
+        for wid, btn in self._window_buttons.items():
+            w = self._controller.state.by_id(wid)
+            if w is None:
+                continue
+            self._apply_tab_color(btn, wid, w.current_path or "")
 
     def _on_window_focus_in(self, _widget, _event) -> bool:
         if self._stack.get_visible_child_name() == _STACK_TERMINAL:
@@ -509,6 +569,16 @@ def _format_tooltip(win: WindowInfo) -> str:
             lines.append("")
             lines.extend(preview_lines)
     return "\n".join(lines)
+
+
+def _short_home(path: str) -> str:
+    import os
+    home = os.path.expanduser("~")
+    if path == home:
+        return "~"
+    if path.startswith(home + "/"):
+        return "~/" + path[len(home) + 1 :]
+    return path
 
 
 def _hbtn(icon_name: str, tooltip: str, handler) -> Gtk.Button:

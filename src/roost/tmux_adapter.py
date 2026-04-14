@@ -42,9 +42,14 @@ def ensure_session(name: str) -> bool:
     # Session-scoped mouse mode: wheel scrolls tmux history (copy-mode)
     # and PgUp/PgDn work after the prefix. Scoped so it does not touch
     # other tmux sessions on the same server.
+    #
+    # NOTE: set-option does NOT accept the '=' exact-match target prefix
+    # (unlike has-session, list-windows, etc.) — passing '=roost' yields
+    # "no such session" and silently dropped the mouse setting entirely
+    # in earlier versions.
     for opt, val in (("mouse", "on"),):
         try:
-            _run(["set-option", "-t", f"={name}", opt, val])
+            _run(["set-option", "-t", name, opt, val])
         except TmuxError:
             pass
     return created

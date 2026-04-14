@@ -106,6 +106,36 @@ class Controller:
             self._emit_error(str(exc))
         self.sync_now()
 
+    def move_to(self, window_id: str, target_id: str) -> None:
+        """Move `window_id` to the current position of `target_id`,
+        shifting intermediate windows via adjacent swaps."""
+        if window_id == target_id:
+            return
+        ordered: list[WindowInfo] = sorted(
+            self._state.windows, key=lambda w: w.index
+        )
+        src = next(
+            (i for i, w in enumerate(ordered) if w.id == window_id), -1
+        )
+        dst = next(
+            (i for i, w in enumerate(ordered) if w.id == target_id), -1
+        )
+        if src < 0 or dst < 0:
+            return
+        try:
+            while src != dst:
+                step = 1 if dst > src else -1
+                neighbor = ordered[src + step]
+                tmux_adapter.swap_windows(ordered[src].id, neighbor.id)
+                ordered[src], ordered[src + step] = (
+                    ordered[src + step],
+                    ordered[src],
+                )
+                src += step
+        except TmuxError as exc:
+            self._emit_error(str(exc))
+        self.sync_now()
+
     def close_console(self, window_id: str) -> None:
         try:
             tmux_adapter.kill_window(window_id)

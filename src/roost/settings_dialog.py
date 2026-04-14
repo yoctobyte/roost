@@ -58,6 +58,33 @@ class SettingsDialog(Gtk.Dialog):
 
         box.add(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
 
+        color_section = Gtk.Label(xalign=0.0)
+        color_section.set_markup("<b>Tab colors</b>")
+        box.add(color_section)
+
+        self._auto_color_check = Gtk.CheckButton(
+            label="Automatically color tabs by working folder"
+        )
+        self._auto_color_check.set_active(current.auto_color_tabs)
+        box.add(self._auto_color_check)
+
+        color_explain = Gtk.Label(xalign=0.0)
+        color_explain.set_line_wrap(True)
+        color_explain.set_max_width_chars(60)
+        color_explain.set_markup(
+            "<small>"
+            "When on, each tab gets a pastel color derived from its "
+            "project root (for example <tt>~/projects/foo</tt> and "
+            "<tt>~/projects/bar</tt> get different colors; "
+            "<tt>~/projects/foo/src</tt> inherits <tt>~/projects/foo</tt>). "
+            "Right-click a tab and pick <i>Color folder</i> to override. "
+            "Explicit choices always win over the automatic color."
+            "</small>"
+        )
+        box.add(color_explain)
+
+        box.add(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
+
         section = Gtk.Label(xalign=0.0)
         section.set_markup("<b>Remember tabs across restarts</b>")
         box.add(section)
@@ -99,7 +126,8 @@ class SettingsDialog(Gtk.Dialog):
         return Settings(
             overview_font_size=int(self._font_spin.get_value()),
             theme=theme_key,
-            tab_colors=dict(self._current.tab_colors),
+            cwd_colors=dict(self._current.cwd_colors),
+            auto_color_tabs=self._auto_color_check.get_active(),
             remember_tabs=self._remember_check.get_active(),
         ).clamp()
 
