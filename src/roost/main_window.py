@@ -3,14 +3,16 @@ import gi
 gi.require_version("Gtk", "3.0")
 gi.require_version("Gdk", "3.0")
 
-from gi.repository import Gdk, Gtk, Pango  # noqa: E402
+from gi.repository import Gdk, GLib, Gtk, Pango  # noqa: E402
 
 from roost import settings as settings_module
+from roost import state as state_module
 from roost import tmux_adapter
 from roost.config import TAB_LABEL_MAX_CHARS, TAB_STRIP_MULTIROW
 from roost.controller import Controller
 from roost.models import AppState, WindowInfo
 from roost.overview_page import OverviewPage
+from roost.restore_dialog import RestoreDialog
 from roost.settings import TAB_COLORS, Settings
 from roost.settings_dialog import SettingsDialog
 from roost.terminal_page import TerminalPage
@@ -26,10 +28,12 @@ class MainWindow(Gtk.ApplicationWindow):
 
         self._controller = controller
         self._settings: Settings = settings_module.load()
+        self._controller.remember_tabs = self._settings.remember_tabs
         self._session_lost_shown = False
         self._window_buttons: dict[str, Gtk.ToggleButton] = {}
         self._button_css: dict[str, Gtk.CssProvider] = {}
         self._updating_buttons = False
+        self._restore_offered = False
 
         self._build_header()
         self._build_body()
@@ -41,6 +45,9 @@ class MainWindow(Gtk.ApplicationWindow):
         # When the main window regains focus and the terminal page is
         # visible, forward focus to the VTE so function keys land there.
         self.connect("focus-in-event", self._on_window_focus_in)
+
+        # Offer a restore dialog once the window is visible and idle.
+        GLib.idle_add(self._maybe_offer_restore)
 
         self._on_state_changed(controller.state)
 
@@ -191,6 +198,12 @@ class MainWindow(Gtk.ApplicationWindow):
         self._overview.apply_settings(self._settings)
         theme = self._settings.theme_obj()
         self._terminal.apply_theme(theme.fg, theme.bg)
+        self._controller.remember_tabs = self._settings.remember_tabs
+        if not self._settings.remember_tabs:
+            try:
+                state_module.clear()
+            except OSError:
+                pass
 
     def _action_rename(self) -> None:
         win = self._controller.selected_window()
@@ -452,6 +465,28 @@ class MainWindow(Gtk.ApplicationWindow):
     def _on_window_focus_in(self, _widget, _event) -> bool:
         if self._stack.get_visible_child_name() == _STACK_TERMINAL:
             self._terminal.grab_focus()
+        return False
+
+    def _maybe_offer_restore(self) -> bool:
+        if self._restore_offered:
+            return False
+        self._restore_offered = True
+        if not self._controller.was_fresh_start:
+            return False
+        if not self._settings.remember_tabs:
+            return False
+        snap = state_module.load()
+        if snap is None or not snap.windows:
+            return False
+        dialog = RestoreDialog(self, snap)
+        try:
+            response = dialog.run()
+            if response == Gtk.ResponseType.OK:
+                selected = dialog.get_selected()
+                if selected:
+                    self._controller.restore_windows(selected)
+        finally:
+            dialog.destroy()
         return False
 
     def _on_destroy(self, _widget) -> None:

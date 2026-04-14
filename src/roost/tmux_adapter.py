@@ -33,9 +33,12 @@ def session_exists(name: str) -> bool:
         return False
 
 
-def ensure_session(name: str) -> None:
+def ensure_session(name: str) -> bool:
+    """Create the session if missing. Returns True if it was created."""
+    created = False
     if not session_exists(name):
         _run(["new-session", "-d", "-s", name])
+        created = True
     # Session-scoped mouse mode: wheel scrolls tmux history (copy-mode)
     # and PgUp/PgDn work after the prefix. Scoped so it does not touch
     # other tmux sessions on the same server.
@@ -44,6 +47,7 @@ def ensure_session(name: str) -> None:
             _run(["set-option", "-t", f"={name}", opt, val])
         except TmuxError:
             pass
+    return created
 
 
 def kill_session(name: str) -> None:
@@ -144,11 +148,22 @@ def capture_preview(window_id: str, lines: int) -> str:
     return out.rstrip("\n")
 
 
-def new_window(session: str, name: str | None = None) -> str:
+def new_window(
+    session: str, name: str | None = None, cwd: str | None = None
+) -> str:
     args = ["new-window", "-d", "-t", f"={session}", "-P", "-F", "#{window_id}"]
+    if cwd:
+        args.extend(["-c", cwd])
     if name:
         args.extend(["-n", name])
     return _run(args).strip()
+
+
+def send_text(window_id: str, text: str) -> None:
+    """Send literal text to a window's foreground pane. No Enter."""
+    if not text:
+        return
+    _run(["send-keys", "-t", window_id, "-l", text])
 
 
 def rename_window(window_id: str, name: str) -> None:

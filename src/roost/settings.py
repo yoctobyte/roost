@@ -42,6 +42,7 @@ DEFAULT_THEME = "ubuntu"
 DEFAULT_OVERVIEW_FONT_SIZE = 4
 MIN_FONT_SIZE = 2
 MAX_FONT_SIZE = 14
+DEFAULT_REMEMBER_TABS = True
 
 
 @dataclass
@@ -52,6 +53,7 @@ class Settings:
     # window-id) so colors survive session recreation; collisions on
     # rename are accepted as a feature.
     tab_colors: dict = field(default_factory=dict)
+    remember_tabs: bool = DEFAULT_REMEMBER_TABS
 
     def clamp(self) -> "Settings":
         size = max(MIN_FONT_SIZE, min(MAX_FONT_SIZE, int(self.overview_font_size)))
@@ -62,7 +64,10 @@ class Settings:
             if str(v) in TAB_COLORS
         }
         return Settings(
-            overview_font_size=size, theme=theme, tab_colors=colors
+            overview_font_size=size,
+            theme=theme,
+            tab_colors=colors,
+            remember_tabs=bool(self.remember_tabs),
         )
 
     def theme_obj(self) -> Theme:

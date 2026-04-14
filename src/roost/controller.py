@@ -6,6 +6,7 @@ gi.require_version("Gtk", "3.0")
 
 from gi.repository import GLib  # noqa: E402
 
+from roost import state as state_mod
 from roost import tmux_adapter
 from roost.config import POLL_INTERVAL_MS, PREVIEW_LINES, SESSION_NAME
 from roost.models import AppState, WindowInfo
@@ -22,6 +23,11 @@ class Controller:
         self._state_listeners: list[StateListener] = []
         self._error_listeners: list[ErrorListener] = []
         self._poll_source: int | None = None
+        self._was_fresh = False
+        self._snapshot_key: tuple = ()
+        # Whether to persist session snapshots. Main window flips this
+        # from Settings after construction.
+        self.remember_tabs = True
 
     @property
     def session(self) -> str:
@@ -38,10 +44,14 @@ class Controller:
         self._error_listeners.append(listener)
 
     def start(self) -> None:
-        tmux_adapter.ensure_session(self._session)
+        self._was_fresh = tmux_adapter.ensure_session(self._session)
         self.sync_now()
         if self._poll_source is None:
             self._poll_source = GLib.timeout_add(POLL_INTERVAL_MS, self._tick)
+
+    @property
+    def was_fresh_start(self) -> bool:
+        return self._was_fresh
 
     def stop(self) -> None:
         if self._poll_source is not None:
@@ -131,10 +141,42 @@ class Controller:
         self.sync_now()
         return True
 
+    def restore_windows(self, entries) -> None:
+        for w in entries:
+            try:
+                wid = tmux_adapter.new_window(
+                    self._session,
+                    name=w.name or None,
+                    cwd=w.cwd or None,
+                )
+            except TmuxError as exc:
+                self._emit_error(str(exc))
+                continue
+            if w.last_command:
+                try:
+                    tmux_adapter.send_text(wid, w.last_command)
+                except TmuxError:
+                    pass
+        self.sync_now()
+
     def _set_state(self, state: AppState) -> None:
         self._state = state
         for listener in list(self._state_listeners):
             listener(state)
+        self._maybe_save_snapshot(state)
+
+    def _maybe_save_snapshot(self, state: AppState) -> None:
+        if not self.remember_tabs:
+            return
+        snap = state_mod.build_snapshot(self._session, state.windows)
+        key = state_mod.change_key(snap.windows)
+        if key == self._snapshot_key:
+            return
+        self._snapshot_key = key
+        try:
+            state_mod.save(snap)
+        except OSError:
+            pass
 
     def _emit_error(self, message: str) -> None:
         for listener in list(self._error_listeners):
