@@ -19,10 +19,12 @@ install_desktop_entry() {
 
   mkdir -p "$DESKTOP_DIR" "$ICON_DIR"
 
+  local icon_changed=0
   # Copy icon to the hicolor theme so the desktop entry can reference
   # it by symbolic name (Icon=org.roost.Roost).
   if [ ! -f "$ICON_FILE" ] || ! cmp -s "$src_icon" "$ICON_FILE"; then
     cp -- "$src_icon" "$ICON_FILE"
+    icon_changed=1
   fi
 
   # Substitute @EXEC@ with the absolute path to this launcher.
@@ -30,15 +32,29 @@ install_desktop_entry() {
   local tmp
   tmp="$(mktemp)"
   sed "s|@EXEC@|${exec_path//|/\\|}|g" "$template" > "$tmp"
+  local desktop_changed=0
   if [ ! -f "$DESKTOP_FILE" ] || ! cmp -s "$tmp" "$DESKTOP_FILE"; then
     mv -- "$tmp" "$DESKTOP_FILE"
     chmod 644 "$DESKTOP_FILE"
-    if command -v update-desktop-database >/dev/null 2>&1; then
-      update-desktop-database "$DESKTOP_DIR" >/dev/null 2>&1 || true
-    fi
+    desktop_changed=1
     echo "roost: installed desktop entry at $DESKTOP_FILE"
   else
     rm -f -- "$tmp"
+  fi
+
+  if [ "$desktop_changed" -eq 1 ] \
+     && command -v update-desktop-database >/dev/null 2>&1; then
+    update-desktop-database "$DESKTOP_DIR" >/dev/null 2>&1 || true
+  fi
+
+  # Rebuild the hicolor icon cache so shells that consult it (GNOME,
+  # Cinnamon, KDE) find Icon=org.roost.Roost by name. --ignore-theme-index
+  # is needed because the user hicolor tree usually has no local
+  # index.theme file.
+  if [ "$icon_changed" -eq 1 ] \
+     && command -v gtk-update-icon-cache >/dev/null 2>&1; then
+    gtk-update-icon-cache --ignore-theme-index -f -q \
+      "$XDG_DATA_HOME_/icons/hicolor" >/dev/null 2>&1 || true
   fi
 }
 
