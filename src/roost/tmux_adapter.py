@@ -53,7 +53,7 @@ def kill_session(name: str) -> None:
 
 _LIST_FMT = (
     "#{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t"
-    "#{pane_current_command}\t#{pane_current_path}"
+    "#{pane_current_command}\t#{pane_current_path}\t#{pane_pid}"
 )
 
 
@@ -64,9 +64,14 @@ def list_windows(session: str) -> list[WindowInfo]:
         if not line:
             continue
         parts = line.split("\t")
-        if len(parts) < 6:
+        if len(parts) < 7:
             continue
-        wid, idx, name, active, cmd, path = parts[:6]
+        wid, idx, name, active, cmd, path, pid_s = parts[:7]
+        try:
+            pane_pid = int(pid_s)
+        except ValueError:
+            pane_pid = 0
+        last_cmd = foreground_command(pane_pid) if pane_pid else ""
         result.append(
             WindowInfo(
                 id=wid,
@@ -75,9 +80,50 @@ def list_windows(session: str) -> list[WindowInfo]:
                 active=(active == "1"),
                 current_command=cmd,
                 current_path=path,
+                last_command=last_cmd,
+                pane_pid=pane_pid,
             )
         )
     return result
+
+
+def foreground_command(pane_pid: int) -> str:
+    """Return the full argv of the pane's foreground process, or "".
+
+    Uses /proc/<pane_pid>/stat's tpgid field (the controlling terminal's
+    foreground process-group id). When tpgid equals the shell's own pid
+    the pane is idle at a prompt and we return "". Otherwise we read
+    /proc/<tpgid>/cmdline — the group leader usually *is* a process,
+    which gives us the command line with arguments (e.g. "vim src/x.py").
+    """
+    try:
+        with open(f"/proc/{pane_pid}/stat", "rb") as fh:
+            data = fh.read()
+    except OSError:
+        return ""
+    # Skip the comm field which is in parens and may contain spaces.
+    rparen = data.rfind(b")")
+    if rparen < 0:
+        return ""
+    tail = data[rparen + 2 :].split()
+    # After ')': state, ppid, pgrp, session, tty_nr, tpgid -> index 5.
+    if len(tail) < 6:
+        return ""
+    try:
+        tpgid = int(tail[5])
+    except ValueError:
+        return ""
+    if tpgid <= 0 or tpgid == pane_pid:
+        return ""
+    try:
+        with open(f"/proc/{tpgid}/cmdline", "rb") as fh:
+            raw = fh.read()
+    except OSError:
+        return ""
+    parts = [p.decode("utf-8", "replace") for p in raw.split(b"\x00") if p]
+    if not parts:
+        return ""
+    return " ".join(parts)
 
 
 def capture_preview(window_id: str, lines: int) -> str:
@@ -115,6 +161,10 @@ def kill_window(window_id: str) -> None:
 
 def select_window(window_id: str) -> None:
     _run(["select-window", "-t", window_id])
+
+
+def swap_windows(a: str, b: str) -> None:
+    _run(["swap-window", "-s", a, "-t", b])
 
 
 def list_windows_with_previews(session: str, preview_lines: int) -> list[WindowInfo]:

@@ -10,6 +10,11 @@ class WindowInfo:
     preview: str = ""
     current_command: str = ""
     current_path: str = ""
+    # Full argv of the foreground process running under the pane, if any.
+    # Empty when the pane is idle at a shell prompt. Captured from
+    # /proc/<tpgid>/cmdline via the pane's shell pid.
+    last_command: str = ""
+    pane_pid: int = 0
 
 
 @dataclass(frozen=True)

@@ -1,6 +1,6 @@
 import json
 import os
-from dataclasses import asdict, dataclass, fields
+from dataclasses import asdict, dataclass, field, fields
 
 
 @dataclass
@@ -9,6 +9,26 @@ class Theme:
     name: str
     fg: str
     bg: str
+
+
+@dataclass
+class TabColor:
+    key: str
+    name: str
+    bg: str
+    fg: str = "#222222"
+
+
+TAB_COLORS: dict[str, TabColor] = {
+    "peach":  TabColor("peach",  "Peach",  "#ffd1b3"),
+    "rose":   TabColor("rose",   "Rose",   "#ffc1cc"),
+    "lemon":  TabColor("lemon",  "Lemon",  "#fff3a3"),
+    "mint":   TabColor("mint",   "Mint",   "#b8e6c1"),
+    "sky":    TabColor("sky",    "Sky",    "#b3dcff"),
+    "lilac":  TabColor("lilac",  "Lilac",  "#d8c1f0"),
+    "sand":   TabColor("sand",   "Sand",   "#e6d5b8"),
+    "grey":   TabColor("grey",   "Grey",   "#d0d0d0"),
+}
 
 
 THEMES: dict[str, Theme] = {
@@ -28,14 +48,37 @@ MAX_FONT_SIZE = 14
 class Settings:
     overview_font_size: int = DEFAULT_OVERVIEW_FONT_SIZE
     theme: str = DEFAULT_THEME
+    # Map of window name -> TAB_COLORS key. Keyed by name (not tmux
+    # window-id) so colors survive session recreation; collisions on
+    # rename are accepted as a feature.
+    tab_colors: dict = field(default_factory=dict)
 
     def clamp(self) -> "Settings":
         size = max(MIN_FONT_SIZE, min(MAX_FONT_SIZE, int(self.overview_font_size)))
         theme = self.theme if self.theme in THEMES else DEFAULT_THEME
-        return Settings(overview_font_size=size, theme=theme)
+        colors = {
+            str(k): str(v)
+            for k, v in (self.tab_colors or {}).items()
+            if str(v) in TAB_COLORS
+        }
+        return Settings(
+            overview_font_size=size, theme=theme, tab_colors=colors
+        )
 
     def theme_obj(self) -> Theme:
         return THEMES[self.theme if self.theme in THEMES else DEFAULT_THEME]
+
+    def tab_color(self, window_name: str) -> TabColor | None:
+        key = self.tab_colors.get(window_name)
+        if key is None:
+            return None
+        return TAB_COLORS.get(key)
+
+    def set_tab_color(self, window_name: str, color_key: str | None) -> None:
+        if color_key is None or color_key not in TAB_COLORS:
+            self.tab_colors.pop(window_name, None)
+        else:
+            self.tab_colors[window_name] = color_key
 
 
 def settings_path() -> str:

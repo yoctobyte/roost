@@ -11,7 +11,7 @@ from roost.config import TAB_LABEL_MAX_CHARS, TAB_STRIP_MULTIROW
 from roost.controller import Controller
 from roost.models import AppState, WindowInfo
 from roost.overview_page import OverviewPage
-from roost.settings import Settings
+from roost.settings import TAB_COLORS, Settings
 from roost.settings_dialog import SettingsDialog
 from roost.terminal_page import TerminalPage
 
@@ -28,6 +28,7 @@ class MainWindow(Gtk.ApplicationWindow):
         self._settings: Settings = settings_module.load()
         self._session_lost_shown = False
         self._window_buttons: dict[str, Gtk.ToggleButton] = {}
+        self._button_css: dict[str, Gtk.CssProvider] = {}
         self._updating_buttons = False
 
         self._build_header()
@@ -255,6 +256,9 @@ class MainWindow(Gtk.ApplicationWindow):
                 btn = Gtk.ToggleButton(label=label)
                 btn.set_can_focus(False)
                 btn.connect("toggled", self._on_window_button_toggled, win.id)
+                btn.connect(
+                    "button-press-event", self._on_tab_button_press, win.id
+                )
                 inner = btn.get_child()
                 if isinstance(inner, Gtk.Label):
                     inner.set_ellipsize(Pango.EllipsizeMode.END)
@@ -266,10 +270,12 @@ class MainWindow(Gtk.ApplicationWindow):
                 if isinstance(inner, Gtk.Label):
                     inner.set_text(label)
             btn.set_tooltip_text(tooltip)
+            self._apply_tab_color(btn, win.id, win.name)
         for stale in list(self._window_buttons):
             if stale in seen:
                 continue
             btn = self._window_buttons.pop(stale)
+            self._button_css.pop(stale, None)
             parent = btn.get_parent()
             if parent is not None:
                 parent.destroy()
@@ -334,6 +340,115 @@ class MainWindow(Gtk.ApplicationWindow):
         dialog.destroy()
         self.destroy()
 
+    def _apply_tab_color(
+        self, btn: Gtk.ToggleButton, window_id: str, window_name: str
+    ) -> None:
+        color = self._settings.tab_color(window_name)
+        ctx = btn.get_style_context()
+        provider = self._button_css.get(window_id)
+        if provider is not None:
+            ctx.remove_provider(provider)
+            self._button_css.pop(window_id, None)
+        if color is None:
+            return
+        css = (
+            "button {"
+            f" background-image: none; background-color: {color.bg};"
+            f" color: {color.fg};"
+            "}"
+        ).encode("utf-8")
+        provider = Gtk.CssProvider()
+        provider.load_from_data(css)
+        ctx.add_provider(provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        self._button_css[window_id] = provider
+
+    def _on_tab_button_press(self, _btn, event, window_id: str) -> bool:
+        if event.type != Gdk.EventType.BUTTON_PRESS:
+            return False
+        if event.button != Gdk.BUTTON_SECONDARY:
+            return False
+        win = self._controller.state.by_id(window_id)
+        if win is None:
+            return False
+        self._show_tab_menu(event, win)
+        return True
+
+    def _show_tab_menu(self, event, win: WindowInfo) -> None:
+        menu = Gtk.Menu()
+
+        rename = Gtk.MenuItem(label="Rename…")
+        rename.connect("activate", lambda *_: self._tab_rename(win))
+        menu.append(rename)
+
+        close = Gtk.MenuItem(label="Close")
+        close.connect("activate", lambda *_: self._tab_close(win))
+        menu.append(close)
+
+        menu.append(Gtk.SeparatorMenuItem())
+
+        ordered = sorted(self._controller.state.windows, key=lambda w: w.index)
+        pos = next((i for i, w in enumerate(ordered) if w.id == win.id), -1)
+
+        move_left = Gtk.MenuItem(label="Move left")
+        move_left.set_sensitive(pos > 0)
+        move_left.connect("activate", lambda *_: self._controller.move_console(win.id, -1))
+        menu.append(move_left)
+
+        move_right = Gtk.MenuItem(label="Move right")
+        move_right.set_sensitive(0 <= pos < len(ordered) - 1)
+        move_right.connect("activate", lambda *_: self._controller.move_console(win.id, 1))
+        menu.append(move_right)
+
+        menu.append(Gtk.SeparatorMenuItem())
+
+        color_item = Gtk.MenuItem(label="Color")
+        color_menu = Gtk.Menu()
+        current_key = self._settings.tab_colors.get(win.name)
+        none_item = Gtk.CheckMenuItem(label="None")
+        none_item.set_draw_as_radio(True)
+        none_item.set_active(current_key is None)
+        none_item.connect("activate", lambda *_: self._tab_set_color(win, None))
+        color_menu.append(none_item)
+        color_menu.append(Gtk.SeparatorMenuItem())
+        for key, tc in TAB_COLORS.items():
+            item = Gtk.CheckMenuItem(label=tc.name)
+            item.set_draw_as_radio(True)
+            item.set_active(current_key == key)
+            item.connect(
+                "activate",
+                lambda _w, k=key: self._tab_set_color(win, k),
+            )
+            color_menu.append(item)
+        color_item.set_submenu(color_menu)
+        menu.append(color_item)
+
+        menu.show_all()
+        menu.attach_to_widget(self, None)
+        menu.popup_at_pointer(event)
+
+    def _tab_rename(self, win: WindowInfo) -> None:
+        new = _prompt(self, "Rename console", "New name:", win.name)
+        if new is None or not new.strip():
+            return
+        old_name = win.name
+        new_name = new.strip()
+        color_key = self._settings.tab_colors.get(old_name)
+        if color_key is not None:
+            self._settings.set_tab_color(old_name, None)
+            self._settings.set_tab_color(new_name, color_key)
+            settings_module.save(self._settings)
+        self._controller.rename_console(win.id, new_name)
+
+    def _tab_close(self, win: WindowInfo) -> None:
+        self._controller.close_console(win.id)
+
+    def _tab_set_color(self, win: WindowInfo, color_key: str | None) -> None:
+        self._settings.set_tab_color(win.name, color_key)
+        settings_module.save(self._settings)
+        btn = self._window_buttons.get(win.id)
+        if btn is not None:
+            self._apply_tab_color(btn, win.id, win.name)
+
     def _on_window_focus_in(self, _widget, _event) -> bool:
         if self._stack.get_visible_child_name() == _STACK_TERMINAL:
             self._terminal.grab_focus()
@@ -345,7 +460,9 @@ class MainWindow(Gtk.ApplicationWindow):
 
 def _format_tooltip(win: WindowInfo) -> str:
     lines = [f"{win.index}: {win.name}"]
-    if win.current_command:
+    if win.last_command:
+        lines.append(f"run: {win.last_command}")
+    elif win.current_command:
         lines.append(f"cmd: {win.current_command}")
     if win.current_path:
         lines.append(f"cwd: {win.current_path}")

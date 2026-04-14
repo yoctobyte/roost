@@ -80,6 +80,22 @@ class Controller:
             self._emit_error(str(exc))
         self.sync_now()
 
+    def move_console(self, window_id: str, direction: int) -> None:
+        ordered = sorted(self._state.windows, key=lambda w: w.index)
+        idx = next(
+            (i for i, w in enumerate(ordered) if w.id == window_id), -1
+        )
+        if idx < 0:
+            return
+        target = idx + direction
+        if target < 0 or target >= len(ordered):
+            return
+        try:
+            tmux_adapter.swap_windows(window_id, ordered[target].id)
+        except TmuxError as exc:
+            self._emit_error(str(exc))
+        self.sync_now()
+
     def close_console(self, window_id: str) -> None:
         try:
             tmux_adapter.kill_window(window_id)
