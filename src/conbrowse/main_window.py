@@ -6,6 +6,7 @@ gi.require_version("Gdk", "3.0")
 from gi.repository import Gdk, Gtk, Pango  # noqa: E402
 
 from conbrowse import settings as settings_module
+from conbrowse import tmux_adapter
 from conbrowse.config import TAB_LABEL_MAX_CHARS, TAB_STRIP_MULTIROW
 from conbrowse.controller import Controller
 from conbrowse.models import AppState, WindowInfo
@@ -296,6 +297,14 @@ class MainWindow(Gtk.ApplicationWindow):
         _toast(self, message)
 
     def _on_terminal_child_exited(self, _status: int) -> None:
+        # The VTE child (our `tmux attach` client) also exits during a
+        # normal window close — ask tmux whether the session is actually
+        # gone before alarming the user.
+        try:
+            if tmux_adapter.session_exists(self._controller.session):
+                return
+        except Exception:
+            pass
         self._show_session_lost()
 
     def _show_session_lost(self) -> None:

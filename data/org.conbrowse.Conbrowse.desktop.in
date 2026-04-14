@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=conbrowse
+GenericName=Console Browser
+Comment=A GTK console browser over tmux
+Exec=@EXEC@ %U
+Icon=org.conbrowse.Conbrowse
+Terminal=false
+Categories=System;TerminalEmulator;Utility;
+Keywords=terminal;console;tmux;
+StartupNotify=true
+StartupWMClass=org.conbrowse.Conbrowse

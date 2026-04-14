@@ -6,11 +6,14 @@ import gi
 gi.require_version("Gtk", "3.0")
 gi.require_version("Vte", "2.91")
 
-from gi.repository import Gtk  # noqa: E402
+from gi.repository import GLib, Gtk  # noqa: E402
 
 from conbrowse.config import APP_ID  # noqa: E402
 from conbrowse.controller import Controller  # noqa: E402
 from conbrowse.tmux_adapter import TmuxError  # noqa: E402
+
+GLib.set_prgname(APP_ID)
+GLib.set_application_name("conbrowse")
 
 
 class ConbrowseApp(Gtk.Application):
