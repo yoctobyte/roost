@@ -29,6 +29,7 @@ class ConbrowseApp(Gtk.Application):
                 self._fatal(f"Failed to start tmux session: {exc}")
                 return
             self._window = MainWindow(self, self._controller)
+            self._window.show_all()
         self._window.present()
 
     def _fatal(self, message: str) -> None:
