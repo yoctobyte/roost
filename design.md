@@ -525,7 +525,36 @@ Terminal page should display:
 
 ---
 
-# 9.4 Visual Style
+# 9.4 Keyboard and Focus Model
+
+The GUI and tmux both want to own the keyboard. A clear split is
+required or both sides will feel broken.
+
+### Rules
+
+* When the VTE has focus, all keystrokes except a small set of GUI
+  accelerators are forwarded to tmux unchanged. This includes the
+  tmux prefix (`C-b` by default) — the user can still drive tmux
+  normally from inside the embedded client.
+* GUI accelerators use the GTK modifier conventions (`Ctrl+Shift+…`
+  or `Super+…`) so they do not collide with common shell or editor
+  shortcuts. Suggested defaults:
+
+  * `Ctrl+Shift+T` — new console
+  * `Ctrl+Shift+W` — close current console
+  * `Ctrl+Shift+R` — rename current console
+  * `Ctrl+Shift+O` — show overview
+  * `F5` — refresh
+  * `Ctrl+Tab` / `Ctrl+Shift+Tab` — next/previous tab
+
+* Tab switching performed via GUI accelerator shall translate to a
+  `select-window` on the managed session, matching the click path
+  described in 17.1, so that GUI and tmux state never diverge.
+
+* The overview page is a GTK widget and does not forward keys to
+  tmux; arrow keys and Enter navigate cards there.
+
+# 9.5 Visual Style
 
 Keep the interface simple:
 
@@ -541,7 +570,8 @@ Avoid overdesign.
 
 ## 10. Sync Model
 
-A polling-based state sync is acceptable.
+A polling-based state sync is acceptable for MVP. A control-mode
+upgrade path is described in 10.4.
 
 ## 10.1 Poll source
 
@@ -567,6 +597,22 @@ Sync must detect:
 * removed windows
 * renamed windows
 * changed preview text
+
+## 10.4 Event-driven upgrade (post-MVP)
+
+tmux supports a **control mode** client (`tmux -C attach`) that emits
+notifications like `%window-add`, `%window-close`, `%window-renamed`,
+and `%output` over stdout. Once polling is proven to work, a
+background control-mode client can replace or supplement polling so
+that:
+
+* the window list updates immediately on external changes
+* the overview only re-captures previews for windows that actually
+  produced output since the last capture
+
+This is an upgrade, not a rewrite — the tmux adapter should be shaped
+so that the controller consumes a stream of diffs, regardless of
+whether those diffs come from a poll loop or from control mode.
 
 ---
 
@@ -599,6 +645,17 @@ The application shall handle at least these errors clearly:
 
 * fail safely
 * rebuild tabs from current tmux truth
+
+### managed session killed externally
+
+If the managed session disappears while the GUI is running (user ran
+`tmux kill-session` from a shell):
+
+* the attached VTE client will exit
+* the controller shall detect the missing session on next sync
+* the GUI shall offer to recreate the session, or exit cleanly
+* it shall never silently recreate the session under the same name
+  without telling the user, because that would hide data loss
 
 tmux remains authoritative.
 
@@ -731,15 +788,46 @@ The implementation should avoid assuming deep tmux internals beyond stable comma
 
 ## 17. Active Terminal Attachment Strategy
 
-Recommended simple approach:
+### 17.1 Chosen approach: one VTE, switch via `select-window`
 
-* one active terminal widget
-* when user selects a real tab, connect the VTE-hosted command to the selected tmux target
-* switching tabs may recreate or retarget the live client cleanly
+A VTE widget spawns a child process once and cannot have that process
+swapped out. "Retargeting" a VTE is therefore not a real operation. The
+recommended approach is:
 
-This is simpler than maintaining many simultaneous embedded live terminal widgets.
+* one persistent VTE widget, mounted in the terminal content area
+* at startup, the VTE spawns a single `tmux attach -t <session>` client
+* when the user clicks a real tab, the controller runs
+  `tmux select-window -t <session>:<winID>` against the same session
+* the attached client follows, because there is only one client and it
+  reflects whatever window tmux considers active
 
-The overview should not depend on VTE live rendering.
+This keeps the GUI stateless with respect to terminal rendering: tmux
+owns the pty, the VTE is just a viewport, and tab switching is a single
+tmux command away.
+
+### 17.2 Why not one VTE per tab
+
+Spawning `tmux attach` in every tab is tempting but has two real
+problems:
+
+* **Size negotiation.** Multiple clients attached to the same session
+  force the session size to the smallest client. Inactive tabs that are
+  allocated at a tiny size would shrink active ones.
+* **Resource cost.** One tmux client + pty per tab for no visible gain,
+  since only the focused tab is ever displayed.
+
+A known workaround is tmux **grouped sessions** (`new-session -t base
+-s view-N`) where each view has its own active-window pointer and its
+own client size. This is strictly more complex than 17.1 and is only
+worth adopting if a future feature genuinely needs two tabs visible at
+once (e.g. split view). It is explicitly out of scope for MVP.
+
+### 17.3 Overview rendering
+
+The overview shall not use VTE at all. Previews come from
+`tmux capture-pane -p -t <session>:<winID>` and are rendered as plain
+monospace text in a GTK label or text view. This avoids running N
+parallel terminal emulators for cards the user only glances at.
 
 ---
 
@@ -782,6 +870,10 @@ The implementation is acceptable when all of the following are true:
 8. Closing a tab removes the tmux window.
 9. External changes from normal tmux usage are reflected after refresh or auto-sync.
 10. The app remains usable without implementing a custom terminal emulator.
+11. The tmux prefix key still works inside the embedded terminal; GUI
+    accelerators do not shadow it.
+12. If the managed tmux session is killed externally, the GUI reports
+    it instead of silently recreating the session.
 
 ---
 
