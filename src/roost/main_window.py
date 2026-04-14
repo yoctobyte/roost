@@ -5,15 +5,15 @@ gi.require_version("Gdk", "3.0")
 
 from gi.repository import Gdk, Gtk, Pango  # noqa: E402
 
-from conbrowse import settings as settings_module
-from conbrowse import tmux_adapter
-from conbrowse.config import TAB_LABEL_MAX_CHARS, TAB_STRIP_MULTIROW
-from conbrowse.controller import Controller
-from conbrowse.models import AppState, WindowInfo
-from conbrowse.overview_page import OverviewPage
-from conbrowse.settings import Settings
-from conbrowse.settings_dialog import SettingsDialog
-from conbrowse.terminal_page import TerminalPage
+from roost import settings as settings_module
+from roost import tmux_adapter
+from roost.config import TAB_LABEL_MAX_CHARS, TAB_STRIP_MULTIROW
+from roost.controller import Controller
+from roost.models import AppState, WindowInfo
+from roost.overview_page import OverviewPage
+from roost.settings import Settings
+from roost.settings_dialog import SettingsDialog
+from roost.terminal_page import TerminalPage
 
 _STACK_OVERVIEW = "overview"
 _STACK_TERMINAL = "terminal"
@@ -21,7 +21,7 @@ _STACK_TERMINAL = "terminal"
 
 class MainWindow(Gtk.ApplicationWindow):
     def __init__(self, app: Gtk.Application, controller: Controller) -> None:
-        super().__init__(application=app, title="conbrowse")
+        super().__init__(application=app, title="roost")
         self.set_default_size(1100, 750)
 
         self._controller = controller
@@ -46,7 +46,7 @@ class MainWindow(Gtk.ApplicationWindow):
     def _build_header(self) -> None:
         header = Gtk.HeaderBar()
         header.set_show_close_button(True)
-        header.set_title("conbrowse")
+        header.set_title("roost")
         header.set_subtitle(self._controller.session)
         self.set_titlebar(header)
 
@@ -385,7 +385,7 @@ def _toast(parent: Gtk.Window, message: str) -> None:
         modal=True,
         message_type=Gtk.MessageType.ERROR,
         buttons=Gtk.ButtonsType.CLOSE,
-        text="conbrowse error",
+        text="roost error",
         secondary_text=message,
     )
     dialog.run()

@@ -6,10 +6,10 @@ gi.require_version("Gtk", "3.0")
 
 from gi.repository import GLib  # noqa: E402
 
-from conbrowse import tmux_adapter
-from conbrowse.config import POLL_INTERVAL_MS, PREVIEW_LINES, SESSION_NAME
-from conbrowse.models import AppState, WindowInfo
-from conbrowse.tmux_adapter import TmuxError
+from roost import tmux_adapter
+from roost.config import POLL_INTERVAL_MS, PREVIEW_LINES, SESSION_NAME
+from roost.models import AppState, WindowInfo
+from roost.tmux_adapter import TmuxError
 
 StateListener = Callable[[AppState], None]
 ErrorListener = Callable[[str], None]

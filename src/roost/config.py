@@ -1,7 +1,7 @@
-SESSION_NAME = "console-browser"
+SESSION_NAME = "roost"
 POLL_INTERVAL_MS = 1500
 PREVIEW_LINES = 24
-APP_ID = "org.conbrowse.Conbrowse"
+APP_ID = "org.roost.Roost"
 
 # Overview cards
 OVERVIEW_PREVIEW_FONT = "Monospace 4"

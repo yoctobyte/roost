@@ -6,9 +6,9 @@ gi.require_version("Gtk", "3.0")
 
 from gi.repository import Gdk, Gtk, Pango  # noqa: E402
 
-from conbrowse.config import OVERVIEW_CARD_HEIGHT, OVERVIEW_CARD_WIDTH
-from conbrowse.models import AppState, WindowInfo
-from conbrowse.settings import Settings
+from roost.config import OVERVIEW_CARD_HEIGHT, OVERVIEW_CARD_WIDTH
+from roost.models import AppState, WindowInfo
+from roost.settings import Settings
 
 
 class OverviewPage(Gtk.ScrolledWindow):

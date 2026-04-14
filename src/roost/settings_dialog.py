@@ -4,7 +4,7 @@ gi.require_version("Gtk", "3.0")
 
 from gi.repository import Gtk  # noqa: E402
 
-from conbrowse.settings import (
+from roost.settings import (
     MAX_FONT_SIZE,
     MIN_FONT_SIZE,
     Settings,

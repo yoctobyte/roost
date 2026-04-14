@@ -8,15 +8,15 @@ gi.require_version("Vte", "2.91")
 
 from gi.repository import GLib, Gtk  # noqa: E402
 
-from conbrowse.config import APP_ID  # noqa: E402
-from conbrowse.controller import Controller  # noqa: E402
-from conbrowse.tmux_adapter import TmuxError  # noqa: E402
+from roost.config import APP_ID  # noqa: E402
+from roost.controller import Controller  # noqa: E402
+from roost.tmux_adapter import TmuxError  # noqa: E402
 
 GLib.set_prgname(APP_ID)
-GLib.set_application_name("conbrowse")
+GLib.set_application_name("roost")
 
 
-class ConbrowseApp(Gtk.Application):
+class RoostApp(Gtk.Application):
     def __init__(self) -> None:
         super().__init__(application_id=APP_ID)
         self._window: Gtk.ApplicationWindow | None = None
@@ -24,7 +24,7 @@ class ConbrowseApp(Gtk.Application):
 
     def do_activate(self) -> None:  # type: ignore[override]
         if self._window is None:
-            from conbrowse.main_window import MainWindow
+            from roost.main_window import MainWindow
 
             icon_path = os.path.join(os.path.dirname(__file__), "icon.svg")
             if os.path.exists(icon_path):
@@ -48,7 +48,7 @@ class ConbrowseApp(Gtk.Application):
             modal=True,
             message_type=Gtk.MessageType.ERROR,
             buttons=Gtk.ButtonsType.CLOSE,
-            text="conbrowse cannot start",
+            text="roost cannot start",
             secondary_text=message,
         )
         dialog.run()
@@ -57,5 +57,5 @@ class ConbrowseApp(Gtk.Application):
 
 
 def main() -> int:
-    app = ConbrowseApp()
+    app = RoostApp()
     return app.run(sys.argv)

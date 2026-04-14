@@ -1,7 +1,7 @@
 import subprocess
 from dataclasses import replace
 
-from conbrowse.models import WindowInfo
+from roost.models import WindowInfo
 
 
 class TmuxError(RuntimeError):

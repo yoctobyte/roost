@@ -40,7 +40,7 @@ class Settings:
 
 def settings_path() -> str:
     base = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
-    return os.path.join(base, "conbrowse", "settings.json")
+    return os.path.join(base, "roost", "settings.json")
 
 
 def load() -> Settings:
