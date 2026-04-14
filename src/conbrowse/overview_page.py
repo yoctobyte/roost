@@ -6,6 +6,11 @@ gi.require_version("Gtk", "3.0")
 
 from gi.repository import Gtk, Pango  # noqa: E402
 
+from conbrowse.config import (
+    OVERVIEW_CARD_HEIGHT,
+    OVERVIEW_CARD_WIDTH,
+    OVERVIEW_PREVIEW_FONT,
+)
 from conbrowse.models import AppState, WindowInfo
 
 
@@ -81,9 +86,9 @@ class _Card(Gtk.EventBox):
         self._preview.set_single_line_mode(False)
         self._preview.set_selectable(False)
         self._preview.set_ellipsize(Pango.EllipsizeMode.NONE)
-        font = Pango.FontDescription.from_string("Monospace 9")
+        font = Pango.FontDescription.from_string(OVERVIEW_PREVIEW_FONT)
         self._preview.override_font(font)
-        self._preview.set_size_request(280, 140)
+        self._preview.set_size_request(OVERVIEW_CARD_WIDTH, OVERVIEW_CARD_HEIGHT)
         box.pack_start(self._preview, True, True, 0)
 
         self.update(info)

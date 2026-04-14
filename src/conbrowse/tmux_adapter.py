@@ -44,7 +44,10 @@ def kill_session(name: str) -> None:
         _run(["kill-session", "-t", f"={name}"])
 
 
-_LIST_FMT = "#{window_id}\t#{window_index}\t#{window_name}\t#{window_active}"
+_LIST_FMT = (
+    "#{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t"
+    "#{pane_current_command}\t#{pane_current_path}"
+)
 
 
 def list_windows(session: str) -> list[WindowInfo]:
@@ -54,15 +57,17 @@ def list_windows(session: str) -> list[WindowInfo]:
         if not line:
             continue
         parts = line.split("\t")
-        if len(parts) != 4:
+        if len(parts) < 6:
             continue
-        wid, idx, name, active = parts
+        wid, idx, name, active, cmd, path = parts[:6]
         result.append(
             WindowInfo(
                 id=wid,
                 index=int(idx),
                 name=name,
                 active=(active == "1"),
+                current_command=cmd,
+                current_path=path,
             )
         )
     return result

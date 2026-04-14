@@ -5,6 +5,7 @@ gi.require_version("Gdk", "3.0")
 
 from gi.repository import Gdk, Gtk, Pango  # noqa: E402
 
+from conbrowse.config import TAB_LABEL_MAX_CHARS, TAB_STRIP_MULTIROW
 from conbrowse.controller import Controller
 from conbrowse.models import AppState, WindowInfo
 from conbrowse.overview_page import OverviewPage
@@ -71,26 +72,42 @@ class MainWindow(Gtk.ApplicationWindow):
         outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self.add(outer)
 
-        self._tab_strip = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=2)
-        self._tab_strip.set_margin_top(4)
-        self._tab_strip.set_margin_bottom(4)
-        self._tab_strip.set_margin_start(6)
-        self._tab_strip.set_margin_end(6)
-
-        scrolled_strip = Gtk.ScrolledWindow()
-        scrolled_strip.set_policy(Gtk.PolicyType.EXTERNAL, Gtk.PolicyType.NEVER)
-        scrolled_strip.add(self._tab_strip)
-        outer.pack_start(scrolled_strip, False, False, 0)
+        if TAB_STRIP_MULTIROW:
+            self._tab_strip: Gtk.Container = Gtk.FlowBox()
+            self._tab_strip.set_selection_mode(Gtk.SelectionMode.NONE)
+            self._tab_strip.set_homogeneous(False)
+            self._tab_strip.set_max_children_per_line(64)
+            self._tab_strip.set_min_children_per_line(1)
+            self._tab_strip.set_row_spacing(2)
+            self._tab_strip.set_column_spacing(2)
+            self._tab_strip.set_margin_top(4)
+            self._tab_strip.set_margin_bottom(4)
+            self._tab_strip.set_margin_start(6)
+            self._tab_strip.set_margin_end(6)
+            outer.pack_start(self._tab_strip, False, False, 0)
+        else:
+            self._tab_strip = Gtk.Box(
+                orientation=Gtk.Orientation.HORIZONTAL, spacing=2
+            )
+            self._tab_strip.set_margin_top(4)
+            self._tab_strip.set_margin_bottom(4)
+            self._tab_strip.set_margin_start(6)
+            self._tab_strip.set_margin_end(6)
+            scrolled = Gtk.ScrolledWindow()
+            scrolled.set_policy(Gtk.PolicyType.EXTERNAL, Gtk.PolicyType.NEVER)
+            scrolled.add(self._tab_strip)
+            outer.pack_start(scrolled, False, False, 0)
 
         outer.pack_start(
             Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL), False, False, 0
         )
 
         self._overview_button = Gtk.ToggleButton(label="Overview")
+        self._overview_button.set_tooltip_text("Show overview of all consoles")
         self._overview_button.connect(
             "toggled", self._on_overview_button_toggled
         )
-        self._tab_strip.pack_start(self._overview_button, False, False, 0)
+        self._tab_strip.add(self._overview_button)
 
         self._stack = Gtk.Stack()
         self._stack.set_transition_type(Gtk.StackTransitionType.NONE)
@@ -197,24 +214,28 @@ class MainWindow(Gtk.ApplicationWindow):
             seen.add(win.id)
             btn = self._window_buttons.get(win.id)
             label = f"{win.index}: {win.name}"
+            tooltip = _format_tooltip(win)
             if btn is None:
                 btn = Gtk.ToggleButton(label=label)
                 btn.connect("toggled", self._on_window_button_toggled, win.id)
-                lbl = btn.get_child()
-                if isinstance(lbl, Gtk.Label):
-                    lbl.set_ellipsize(Pango.EllipsizeMode.END)
-                    lbl.set_max_width_chars(24)
-                self._tab_strip.pack_start(btn, False, False, 0)
+                inner = btn.get_child()
+                if isinstance(inner, Gtk.Label):
+                    inner.set_ellipsize(Pango.EllipsizeMode.END)
+                    inner.set_max_width_chars(TAB_LABEL_MAX_CHARS)
+                self._tab_strip.add(btn)
                 self._window_buttons[win.id] = btn
             else:
                 inner = btn.get_child()
                 if isinstance(inner, Gtk.Label):
                     inner.set_text(label)
+            btn.set_tooltip_text(tooltip)
         for stale in list(self._window_buttons):
             if stale in seen:
                 continue
             btn = self._window_buttons.pop(stale)
-            btn.destroy()
+            parent = btn.get_parent()
+            if parent is not None:
+                parent.destroy()
         self._tab_strip.show_all()
 
     def _sync_button_state(self, selected: WindowInfo | None) -> None:
@@ -270,6 +291,22 @@ class MainWindow(Gtk.ApplicationWindow):
 
     def _on_destroy(self, _widget) -> None:
         self._controller.stop()
+
+
+def _format_tooltip(win: WindowInfo) -> str:
+    lines = [f"{win.index}: {win.name}"]
+    if win.current_command:
+        lines.append(f"cmd: {win.current_command}")
+    if win.current_path:
+        lines.append(f"cwd: {win.current_path}")
+    if win.preview:
+        preview_lines = [
+            ln for ln in win.preview.splitlines() if ln.strip()
+        ][-6:]
+        if preview_lines:
+            lines.append("")
+            lines.extend(preview_lines)
+    return "\n".join(lines)
 
 
 def _hbtn(icon_name: str, tooltip: str, handler) -> Gtk.Button:

@@ -1,4 +1,13 @@
 SESSION_NAME = "console-browser"
 POLL_INTERVAL_MS = 1500
-PREVIEW_LINES = 8
+PREVIEW_LINES = 24
 APP_ID = "org.conbrowse.Conbrowse"
+
+# Overview cards
+OVERVIEW_PREVIEW_FONT = "Monospace 4"
+OVERVIEW_CARD_WIDTH = 280
+OVERVIEW_CARD_HEIGHT = 140
+
+# Tab strip
+TAB_LABEL_MAX_CHARS = 32
+TAB_STRIP_MULTIROW = True

@@ -1,3 +1,4 @@
+import os
 import sys
 
 import gi
@@ -21,6 +22,13 @@ class ConbrowseApp(Gtk.Application):
     def do_activate(self) -> None:  # type: ignore[override]
         if self._window is None:
             from conbrowse.main_window import MainWindow
+
+            icon_path = os.path.join(os.path.dirname(__file__), "icon.svg")
+            if os.path.exists(icon_path):
+                try:
+                    Gtk.Window.set_default_icon_from_file(icon_path)
+                except Exception:
+                    pass
 
             self._controller = Controller()
             try:

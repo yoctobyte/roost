@@ -8,6 +8,8 @@ class WindowInfo:
     name: str
     active: bool
     preview: str = ""
+    current_command: str = ""
+    current_path: str = ""
 
 
 @dataclass(frozen=True)
