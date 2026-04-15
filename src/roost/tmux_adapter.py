@@ -171,13 +171,31 @@ def send_text(window_id: str, text: str) -> None:
     _run(["send-keys", "-t", window_id, "-l", text])
 
 
-def enter_copy_mode_up(session: str) -> None:
+def enter_copy_mode_up(session: str) -> bool:
     """Enter copy-mode in the session's active pane and scroll up one page.
 
-    Successive calls keep scrolling — letting us bind bare PgUp on the
-    GUI side without needing the tmux prefix.
+    Returns True if copy-mode was triggered. Returns False (and does
+    nothing) when the active pane is on the alternate screen — i.e. a
+    full-screen TUI app like vim/htop/claude is running. Those apps
+    own PgUp themselves; intervening leaves the cursor mis-positioned
+    after copy-mode exits.
     """
+    try:
+        out = _run(
+            [
+                "display-message",
+                "-p",
+                "-t",
+                session,
+                "#{alternate_on}",
+            ]
+        ).strip()
+    except TmuxError:
+        out = "0"
+    if out == "1":
+        return False
     _run(["copy-mode", "-u", "-t", session])
+    return True
 
 
 def set_status_bar(session: str, on: bool) -> None:

@@ -87,10 +87,10 @@ class TerminalPage(Gtk.Box):
         # natively; outside copy-mode the application receives it.
         if event.keyval == Gdk.KEY_Page_Up and not (ctrl or shift):
             try:
-                tmux_adapter.enter_copy_mode_up(self._session)
+                handled = tmux_adapter.enter_copy_mode_up(self._session)
             except tmux_adapter.TmuxError:
                 return False
-            return True
+            return handled
         return False
 
     def _on_button_press(self, _widget, event) -> bool:

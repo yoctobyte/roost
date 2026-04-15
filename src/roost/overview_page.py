@@ -3,10 +3,16 @@ from typing import Callable
 import gi
 
 gi.require_version("Gtk", "3.0")
+gi.require_version("Gdk", "3.0")
 
 from gi.repository import Gdk, Gtk, Pango  # noqa: E402
 
-from roost.config import OVERVIEW_CARD_HEIGHT, OVERVIEW_CARD_WIDTH
+from roost.config import (
+    OVERVIEW_CARD_HEIGHT,
+    OVERVIEW_CARD_WIDTH,
+    OVERVIEW_PREVIEW_COLS,
+    OVERVIEW_PREVIEW_ROWS,
+)
 from roost.models import AppState, WindowInfo
 from roost.settings import Settings
 
@@ -111,6 +117,8 @@ class _Card(Gtk.EventBox):
         self._preview.set_single_line_mode(False)
         self._preview.set_selectable(False)
         self._preview.set_ellipsize(Pango.EllipsizeMode.NONE)
+        self._preview.set_max_width_chars(OVERVIEW_PREVIEW_COLS)
+        self._preview.set_width_chars(OVERVIEW_PREVIEW_COLS)
         self._preview.set_size_request(OVERVIEW_CARD_WIDTH, OVERVIEW_CARD_HEIGHT)
         box.pack_start(self._preview, True, True, 0)
 
@@ -118,6 +126,10 @@ class _Card(Gtk.EventBox):
         self.update(info)
 
         self.connect("button-press-event", self._on_click)
+
+    def _on_click(self, _widget, _event) -> bool:
+        self._on_activate(self._window_id)
+        return True
 
     def apply_settings(self, settings: Settings) -> None:
         font = Pango.FontDescription.from_string(
@@ -137,8 +149,20 @@ class _Card(Gtk.EventBox):
     def update(self, info: WindowInfo) -> None:
         marker = " *" if info.active else ""
         self._title.set_text(f"{info.index}: {info.name}{marker}")
-        self._preview.set_text(info.preview or "")
+        self._preview.set_text(_clip_preview(info.preview or ""))
 
-    def _on_click(self, _widget, _event) -> bool:
-        self._on_activate(self._window_id)
-        return True
+
+def _clip_preview(text: str) -> str:
+    """Clip each line to OVERVIEW_PREVIEW_COLS and the whole block to
+    OVERVIEW_PREVIEW_ROWS, so previews stay terminal-shaped regardless
+    of pathological log-line widths in the source pane."""
+    if not text:
+        return ""
+    lines = text.splitlines()[-OVERVIEW_PREVIEW_ROWS:]
+    out = []
+    for ln in lines:
+        if len(ln) > OVERVIEW_PREVIEW_COLS:
+            out.append(ln[: OVERVIEW_PREVIEW_COLS - 1] + "…")
+        else:
+            out.append(ln)
+    return "\n".join(out)
