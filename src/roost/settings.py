@@ -45,6 +45,7 @@ MIN_FONT_SIZE = 2
 MAX_FONT_SIZE = 14
 DEFAULT_REMEMBER_TABS = True
 DEFAULT_AUTO_COLOR_TABS = True
+DEFAULT_SHOW_STATUS_BAR = False
 
 
 @dataclass
@@ -60,6 +61,7 @@ class Settings:
     # deterministic color derived from the project root of their cwd.
     auto_color_tabs: bool = DEFAULT_AUTO_COLOR_TABS
     remember_tabs: bool = DEFAULT_REMEMBER_TABS
+    show_status_bar: bool = DEFAULT_SHOW_STATUS_BAR
 
     def clamp(self) -> "Settings":
         size = max(MIN_FONT_SIZE, min(MAX_FONT_SIZE, int(self.overview_font_size)))
@@ -75,6 +77,7 @@ class Settings:
             cwd_colors=colors,
             auto_color_tabs=bool(self.auto_color_tabs),
             remember_tabs=bool(self.remember_tabs),
+            show_status_bar=bool(self.show_status_bar),
         )
 
     def theme_obj(self) -> Theme:

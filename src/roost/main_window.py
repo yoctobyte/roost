@@ -31,6 +31,7 @@ class MainWindow(Gtk.ApplicationWindow):
         self._controller = controller
         self._settings: Settings = settings_module.load()
         self._controller.remember_tabs = self._settings.remember_tabs
+        self._apply_status_bar()
         self._session_lost_shown = False
         self._window_buttons: dict[str, Gtk.ToggleButton] = {}
         self._button_css: dict[str, Gtk.CssProvider] = {}
@@ -201,11 +202,21 @@ class MainWindow(Gtk.ApplicationWindow):
         theme = self._settings.theme_obj()
         self._terminal.apply_theme(theme.fg, theme.bg)
         self._controller.remember_tabs = self._settings.remember_tabs
+        self._apply_status_bar()
+        self._refresh_all_tab_colors()
         if not self._settings.remember_tabs:
             try:
                 state_module.clear()
             except OSError:
                 pass
+
+    def _apply_status_bar(self) -> None:
+        try:
+            tmux_adapter.set_status_bar(
+                self._controller.session, self._settings.show_status_bar
+            )
+        except tmux_adapter.TmuxError:
+            pass
 
     def _action_rename(self) -> None:
         win = self._controller.selected_window()

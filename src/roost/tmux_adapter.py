@@ -171,6 +171,19 @@ def send_text(window_id: str, text: str) -> None:
     _run(["send-keys", "-t", window_id, "-l", text])
 
 
+def enter_copy_mode_up(session: str) -> None:
+    """Enter copy-mode in the session's active pane and scroll up one page.
+
+    Successive calls keep scrolling — letting us bind bare PgUp on the
+    GUI side without needing the tmux prefix.
+    """
+    _run(["copy-mode", "-u", "-t", session])
+
+
+def set_status_bar(session: str, on: bool) -> None:
+    _run(["set-option", "-t", session, "status", "on" if on else "off"])
+
+
 def rename_window(window_id: str, name: str) -> None:
     _run(["rename-window", "-t", window_id, name])
 

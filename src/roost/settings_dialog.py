@@ -85,6 +85,33 @@ class SettingsDialog(Gtk.Dialog):
 
         box.add(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
 
+        status_section = Gtk.Label(xalign=0.0)
+        status_section.set_markup("<b>tmux status bar</b>")
+        box.add(status_section)
+
+        self._status_bar_check = Gtk.CheckButton(
+            label="Show the green tmux status bar at the bottom"
+        )
+        self._status_bar_check.set_active(current.show_status_bar)
+        box.add(self._status_bar_check)
+
+        status_explain = Gtk.Label(xalign=0.0)
+        status_explain.set_line_wrap(True)
+        status_explain.set_max_width_chars(60)
+        status_explain.set_markup(
+            "<small>"
+            "tmux normally draws a status line along the bottom of the "
+            "pane listing its windows. roost already shows that "
+            "information in its own tab strip, so the status bar is "
+            "off by default — turning it off frees one row of terminal "
+            "real estate. Enable it if you rely on tmux's own indicators "
+            "(activity flags, prefix-key feedback, etc.)."
+            "</small>"
+        )
+        box.add(status_explain)
+
+        box.add(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
+
         section = Gtk.Label(xalign=0.0)
         section.set_markup("<b>Remember tabs across restarts</b>")
         box.add(section)
@@ -129,6 +156,7 @@ class SettingsDialog(Gtk.Dialog):
             cwd_colors=dict(self._current.cwd_colors),
             auto_color_tabs=self._auto_color_check.get_active(),
             remember_tabs=self._remember_check.get_active(),
+            show_status_bar=self._status_bar_check.get_active(),
         ).clamp()
 
 

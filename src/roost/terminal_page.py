@@ -9,6 +9,8 @@ gi.require_version("Vte", "2.91")
 
 from gi.repository import Gdk, GLib, Gtk, Vte  # noqa: E402
 
+from roost import tmux_adapter  # noqa: E402
+
 
 class TerminalPage(Gtk.Box):
     def __init__(
@@ -18,6 +20,7 @@ class TerminalPage(Gtk.Box):
     ) -> None:
         super().__init__(orientation=Gtk.Orientation.VERTICAL)
         self._on_child_exited = on_child_exited
+        self._session = session
 
         self._vte = Vte.Terminal()
         self._vte.set_scrollback_lines(10000)
@@ -77,6 +80,16 @@ class TerminalPage(Gtk.Box):
             return True
         if shift and event.keyval == Gdk.KEY_Insert:
             self._do_paste()
+            return True
+        # Bare PageUp drops the active pane into tmux copy-mode and
+        # scrolls one page back. Successive presses keep scrolling.
+        # PageDown is left alone — when in copy-mode tmux handles it
+        # natively; outside copy-mode the application receives it.
+        if event.keyval == Gdk.KEY_Page_Up and not (ctrl or shift):
+            try:
+                tmux_adapter.enter_copy_mode_up(self._session)
+            except tmux_adapter.TmuxError:
+                return False
             return True
         return False
 
