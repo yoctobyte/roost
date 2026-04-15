@@ -378,10 +378,18 @@ class MainWindow(Gtk.ApplicationWindow):
             self._button_css.pop(window_id, None)
         if color is None:
             return
+        bright_bg = _lighten_hex(color.bg, 0.30)
         css = (
             "button {"
             f" background-image: none; background-color: {color.bg};"
             f" color: {color.fg};"
+            " border-width: 2px; border-style: solid;"
+            f" border-color: {color.bg};"
+            "}"
+            "button:checked {"
+            f" background-image: none; background-color: {bright_bg};"
+            f" color: {color.fg};"
+            f" border-color: {color.fg};"
             "}"
         ).encode("utf-8")
         provider = Gtk.CssProvider()
@@ -590,6 +598,17 @@ def _short_home(path: str) -> str:
     if path.startswith(home + "/"):
         return "~/" + path[len(home) + 1 :]
     return path
+
+
+def _lighten_hex(hex_color: str, amount: float) -> str:
+    h = hex_color.lstrip("#")
+    if len(h) != 6:
+        return hex_color
+    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    r = min(255, int(r + (255 - r) * amount))
+    g = min(255, int(g + (255 - g) * amount))
+    b = min(255, int(b + (255 - b) * amount))
+    return f"#{r:02x}{g:02x}{b:02x}"
 
 
 def _hbtn(icon_name: str, tooltip: str, handler) -> Gtk.Button:
