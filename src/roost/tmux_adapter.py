@@ -39,20 +39,54 @@ def ensure_session(name: str) -> bool:
     if not session_exists(name):
         _run(["new-session", "-d", "-s", name])
         created = True
-    # Session-scoped mouse mode: wheel scrolls tmux history (copy-mode)
-    # and PgUp/PgDn work after the prefix. Scoped so it does not touch
-    # other tmux sessions on the same server.
-    #
-    # NOTE: set-option does NOT accept the '=' exact-match target prefix
-    # (unlike has-session, list-windows, etc.) — passing '=roost' yields
-    # "no such session" and silently dropped the mouse setting entirely
-    # in earlier versions.
-    for opt, val in (("mouse", "on"),):
-        try:
-            _run(["set-option", "-t", name, opt, val])
-        except TmuxError:
-            pass
     return created
+
+
+def set_mouse_mode(session: str, on: bool) -> None:
+    """Toggle tmux session-scoped mouse mode.
+
+    With mouse on, tmux owns drag selection and the wheel scrolls
+    natively into copy-mode (and selection survives across pages).
+    With mouse off, VTE owns selection and roost forwards wheel events
+    via copy-mode itself.
+
+    When turning mouse on we also rebind MouseDragEnd1Pane to
+    `copy-selection-no-clear` so the highlight stays visible after
+    button release. The default binding is `copy-pipe-and-cancel`,
+    which exits copy-mode on release and visually clears the selection
+    (the text is still in a buffer, but the user has no idea what they
+    selected). This rebind is server-global; we leave it in place even
+    after switching back to vte mode because it only fires during a
+    mouse drag — which never happens when mouse mode is off.
+    """
+    try:
+        _run(["set-option", "-t", session, "mouse", "on" if on else "off"])
+    except TmuxError:
+        pass
+    if on:
+        for table in ("copy-mode", "copy-mode-vi"):
+            try:
+                _run(
+                    [
+                        "bind-key",
+                        "-T",
+                        table,
+                        "MouseDragEnd1Pane",
+                        "send-keys",
+                        "-X",
+                        "copy-selection-no-clear",
+                    ]
+                )
+            except TmuxError:
+                pass
+
+
+def show_buffer() -> str:
+    """Return the most recent tmux buffer text, or empty string."""
+    try:
+        return _run(["show-buffer"])
+    except TmuxError:
+        return ""
 
 
 def kill_session(name: str) -> None:
@@ -135,6 +169,31 @@ def foreground_command(pane_pid: int) -> str:
     return " ".join(parts)
 
 
+def process_starttime(pid: int) -> int:
+    """Return /proc/<pid>/stat field 22 (starttime, clock ticks since boot).
+
+    Smaller values are older processes. Returns 0 if unreadable, which
+    sorts as oldest — fine, since we only care about a stable ordering.
+    """
+    if pid <= 0:
+        return 0
+    try:
+        with open(f"/proc/{pid}/stat", "rb") as fh:
+            data = fh.read()
+    except OSError:
+        return 0
+    rparen = data.rfind(b")")
+    if rparen < 0:
+        return 0
+    tail = data[rparen + 2 :].split()
+    if len(tail) < 20:
+        return 0
+    try:
+        return int(tail[19])
+    except ValueError:
+        return 0
+
+
 def capture_preview(window_id: str, lines: int) -> str:
     try:
         out = _run(
@@ -195,6 +254,37 @@ def enter_copy_mode_up(session: str) -> bool:
     if out == "1":
         return False
     _run(["copy-mode", "-u", "-t", session])
+    return True
+
+
+def scroll_copy_mode_down(session: str) -> bool:
+    """If the active pane is in copy-mode, scroll it down half a page.
+
+    Returns True if a scroll was sent. Does nothing (and returns False)
+    when the pane is on the alternate screen or not in copy-mode.
+    """
+    try:
+        out = _run(
+            [
+                "display-message",
+                "-p",
+                "-t",
+                session,
+                "#{alternate_on} #{pane_in_mode}",
+            ]
+        ).strip()
+    except TmuxError:
+        return False
+    parts = out.split()
+    if len(parts) != 2:
+        return False
+    alt, in_mode = parts
+    if alt == "1" or in_mode != "1":
+        return False
+    try:
+        _run(["send-keys", "-t", session, "-X", "halfpage-down"])
+    except TmuxError:
+        return False
     return True
 
 

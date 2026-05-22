@@ -21,6 +21,8 @@ class TerminalPage(Gtk.Box):
         super().__init__(orientation=Gtk.Orientation.VERTICAL)
         self._on_child_exited = on_child_exited
         self._session = session
+        self._intercept_scroll = True
+        self._smooth_accum = 0.0
 
         self._vte = Vte.Terminal()
         self._vte.set_scrollback_lines(10000)
@@ -46,6 +48,7 @@ class TerminalPage(Gtk.Box):
         self._vte.connect("child-exited", self._handle_child_exited)
         self._vte.connect("key-press-event", self._on_key_press)
         self._vte.connect("button-press-event", self._on_button_press)
+        self._vte.connect("scroll-event", self._on_scroll)
 
     def grab_focus(self) -> None:  # type: ignore[override]
         # Defer to the idle loop so grab happens after any in-flight
@@ -93,6 +96,46 @@ class TerminalPage(Gtk.Box):
             return handled
         return False
 
+    def set_intercept_scroll(self, intercept: bool) -> None:
+        self._intercept_scroll = intercept
+        self._smooth_accum = 0.0
+
+    def _on_scroll(self, _widget, event) -> bool:
+        # Only intercept when tmux mouse mode is off. With mouse mode on
+        # we let VTE forward the event to tmux, which handles wheel +
+        # scroll-while-select natively.
+        if not self._intercept_scroll:
+            return False
+        direction = event.direction
+        if direction == Gdk.ScrollDirection.SMOOTH:
+            # Touchpads and Wayland mice send smooth scroll. Accumulate
+            # delta_y and step by lines once we cross a threshold.
+            self._smooth_accum += event.delta_y
+            if self._smooth_accum <= -1.0:
+                self._smooth_accum = 0.0
+                return self._scroll_up()
+            if self._smooth_accum >= 1.0:
+                self._smooth_accum = 0.0
+                return self._scroll_down()
+            return True
+        if direction == Gdk.ScrollDirection.UP:
+            return self._scroll_up()
+        if direction == Gdk.ScrollDirection.DOWN:
+            return self._scroll_down()
+        return False
+
+    def _scroll_up(self) -> bool:
+        try:
+            return tmux_adapter.enter_copy_mode_up(self._session)
+        except tmux_adapter.TmuxError:
+            return False
+
+    def _scroll_down(self) -> bool:
+        try:
+            return tmux_adapter.scroll_copy_mode_down(self._session)
+        except tmux_adapter.TmuxError:
+            return False
+
     def _on_button_press(self, _widget, event) -> bool:
         if event.type != Gdk.EventType.BUTTON_PRESS:
             return False
@@ -105,7 +148,12 @@ class TerminalPage(Gtk.Box):
         menu = Gtk.Menu()
 
         copy_item = Gtk.MenuItem(label="Copy")
-        copy_item.set_sensitive(self._vte.get_has_selection())
+        # In tmux selection mode the selection lives in a tmux buffer,
+        # not in VTE — so we can't reliably know if there's something to
+        # copy until we ask tmux. Keep it enabled in that mode.
+        copy_item.set_sensitive(
+            self._vte.get_has_selection() or not self._intercept_scroll
+        )
         copy_item.connect("activate", lambda *_: self._do_copy())
         menu.append(copy_item)
 
@@ -124,15 +172,18 @@ class TerminalPage(Gtk.Box):
         menu.popup_at_pointer(event)
 
     def _do_copy(self) -> None:
-        if not self._vte.get_has_selection():
+        if self._vte.get_has_selection():
+            self._vte.copy_clipboard_format(Vte.Format.TEXT)
+            text = _read_clipboard_text(Gdk.SELECTION_CLIPBOARD)
+            if text is not None:
+                _write_clipboard_text(Gdk.SELECTION_PRIMARY, text)
             return
-        self._vte.copy_clipboard_format(Vte.Format.TEXT)
-        # Mirror to PRIMARY so middle-click paste also works with the
-        # most recent selection (VTE already updates PRIMARY on select,
-        # this is belt-and-suspenders).
-        text = _read_clipboard_text(Gdk.SELECTION_CLIPBOARD)
-        if text is not None:
-            _write_clipboard_text(Gdk.SELECTION_PRIMARY, text)
+        # tmux selection mode: pull the most recent tmux buffer.
+        text = tmux_adapter.show_buffer()
+        if not text:
+            return
+        _write_clipboard_text(Gdk.SELECTION_CLIPBOARD, text)
+        _write_clipboard_text(Gdk.SELECTION_PRIMARY, text)
 
     def _do_paste(self) -> None:
         self._vte.paste_clipboard()

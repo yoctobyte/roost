@@ -41,6 +41,7 @@ class MainWindow(Gtk.ApplicationWindow):
         self._build_header()
         self._build_body()
         self._build_accelerators()
+        self._apply_mouse_mode()
 
         controller.on_state_changed(self._on_state_changed)
         controller.on_error(self._on_error)
@@ -87,6 +88,14 @@ class MainWindow(Gtk.ApplicationWindow):
             "view-refresh-symbolic", "Refresh", self._action_refresh
         )
         header.pack_end(self._btn_refresh)
+
+        self._btn_sort = _hbtn(
+            "view-sort-ascending-symbolic",
+            "Sort tabs (right-click for options)",
+            self._action_sort,
+        )
+        self._btn_sort.connect("button-press-event", self._on_sort_button_press)
+        header.pack_end(self._btn_sort)
 
         self._btn_prefs = _hbtn(
             "preferences-system-symbolic",
@@ -185,6 +194,81 @@ class MainWindow(Gtk.ApplicationWindow):
     def _action_refresh(self) -> None:
         self._controller.sync_now()
 
+    def _action_sort(self) -> None:
+        kind = self._settings.sort_kind or settings_module.DEFAULT_SORT_KIND
+        self._sort_by(kind)
+
+    def _on_sort_button_press(self, _btn, event) -> bool:
+        if event.type != Gdk.EventType.BUTTON_PRESS:
+            return False
+        if event.button != Gdk.BUTTON_SECONDARY:
+            return False
+        self._show_sort_menu(event)
+        return True
+
+    def _show_sort_menu(self, event) -> None:
+        menu = Gtk.Menu()
+        labels = [
+            ("folder", "Sort by project folder"),
+            ("name", "Sort by tab name"),
+            ("app", "Sort by running command"),
+            ("color", "Sort by color tag"),
+            ("age", "Sort by age (oldest first)"),
+        ]
+        current = self._settings.sort_kind or settings_module.DEFAULT_SORT_KIND
+        group = None
+        for kind, label in labels:
+            item = Gtk.RadioMenuItem.new_with_label_from_widget(group, label)
+            if group is None:
+                group = item
+            item.set_active(kind == current)
+            item.connect("toggled", self._on_sort_menu_pick, kind)
+            menu.append(item)
+        menu.show_all()
+        menu.attach_to_widget(self._btn_sort, None)
+        menu.popup_at_pointer(event)
+
+    def _on_sort_menu_pick(self, item, kind: str) -> None:
+        if not item.get_active():
+            return
+        if kind != self._settings.sort_kind:
+            self._settings.sort_kind = kind
+            settings_module.save(self._settings)
+        self._sort_by(kind)
+
+    def _sort_by(self, kind: str) -> None:
+        windows = list(self._controller.state.windows)
+        if not windows:
+            return
+        keyfn = self._sort_keyfn(kind)
+        desired = sorted(windows, key=keyfn)
+        self._controller.reorder_to([w.id for w in desired])
+
+    def _sort_keyfn(self, kind: str):
+        settings = self._settings
+
+        def folder_key(w: WindowInfo):
+            return (project_root(w.current_path or "").lower(), w.name.lower())
+
+        if kind == "name":
+            return lambda w: (w.name.lower(), w.index)
+        if kind == "app":
+            return lambda w: (
+                (w.current_command or "").lower(),
+                w.name.lower(),
+            )
+        if kind == "color":
+            def color_key(w: WindowInfo):
+                tc = settings.resolve_tab_color(w.current_path or "")
+                return (tc.key if tc is not None else "~", w.name.lower())
+            return color_key
+        if kind == "age":
+            return lambda w: (
+                tmux_adapter.process_starttime(w.pane_pid),
+                w.name.lower(),
+            )
+        return folder_key
+
     def _action_preferences(self) -> None:
         dialog = SettingsDialog(self, self._settings)
         try:
@@ -203,6 +287,7 @@ class MainWindow(Gtk.ApplicationWindow):
         self._terminal.apply_theme(theme.fg, theme.bg)
         self._controller.remember_tabs = self._settings.remember_tabs
         self._apply_status_bar()
+        self._apply_mouse_mode()
         self._refresh_all_tab_colors()
         if not self._settings.remember_tabs:
             try:
@@ -217,6 +302,14 @@ class MainWindow(Gtk.ApplicationWindow):
             )
         except tmux_adapter.TmuxError:
             pass
+
+    def _apply_mouse_mode(self) -> None:
+        on = self._settings.mouse_mode == "tmux"
+        try:
+            tmux_adapter.set_mouse_mode(self._controller.session, on)
+        except tmux_adapter.TmuxError:
+            pass
+        self._terminal.set_intercept_scroll(not on)
 
     def _action_rename(self) -> None:
         win = self._controller.selected_window()
@@ -272,41 +365,44 @@ class MainWindow(Gtk.ApplicationWindow):
             self._show_overview()
 
     def _rebuild_window_buttons(self, state: AppState) -> None:
-        seen: set[str] = set()
-        for win in state.windows:
-            seen.add(win.id)
-            btn = self._window_buttons.get(win.id)
-            label = f"{win.index}: {win.name}"
-            tooltip = _format_tooltip(win)
-            if btn is None:
-                btn = Gtk.ToggleButton(label=label)
-                btn.set_can_focus(False)
-                btn.connect("toggled", self._on_window_button_toggled, win.id)
-                btn.connect(
-                    "button-press-event", self._on_tab_button_press, win.id
-                )
-                inner = btn.get_child()
-                if isinstance(inner, Gtk.Label):
-                    inner.set_ellipsize(Pango.EllipsizeMode.END)
-                    inner.set_max_width_chars(TAB_LABEL_MAX_CHARS)
-                self._install_tab_dnd(btn, win.id)
-                self._tab_strip.add(btn)
+        new_ids = [w.id for w in state.windows]
+        existing_ids = list(self._window_buttons.keys())
+        if new_ids != existing_ids:
+            # Order or membership changed (sort, swap, close, new). Tear
+            # down and re-add window buttons so visual order matches tmux.
+            for btn in list(self._window_buttons.values()):
+                parent = btn.get_parent()
+                if parent is not None:
+                    parent.destroy()
+            self._window_buttons.clear()
+            self._button_css.clear()
+            for win in state.windows:
+                btn = self._make_window_button(win)
                 self._window_buttons[win.id] = btn
-            else:
+                self._tab_strip.add(btn)
+                self._apply_tab_color(btn, win.id, win.current_path)
+                btn.set_tooltip_text(_format_tooltip(win))
+        else:
+            for win in state.windows:
+                btn = self._window_buttons[win.id]
                 inner = btn.get_child()
                 if isinstance(inner, Gtk.Label):
-                    inner.set_text(label)
-            btn.set_tooltip_text(tooltip)
-            self._apply_tab_color(btn, win.id, win.current_path)
-        for stale in list(self._window_buttons):
-            if stale in seen:
-                continue
-            btn = self._window_buttons.pop(stale)
-            self._button_css.pop(stale, None)
-            parent = btn.get_parent()
-            if parent is not None:
-                parent.destroy()
+                    inner.set_text(f"{win.index}: {win.name}")
+                btn.set_tooltip_text(_format_tooltip(win))
+                self._apply_tab_color(btn, win.id, win.current_path)
         self._tab_strip.show_all()
+
+    def _make_window_button(self, win: WindowInfo) -> Gtk.ToggleButton:
+        btn = Gtk.ToggleButton(label=f"{win.index}: {win.name}")
+        btn.set_can_focus(False)
+        btn.connect("toggled", self._on_window_button_toggled, win.id)
+        btn.connect("button-press-event", self._on_tab_button_press, win.id)
+        inner = btn.get_child()
+        if isinstance(inner, Gtk.Label):
+            inner.set_ellipsize(Pango.EllipsizeMode.END)
+            inner.set_max_width_chars(TAB_LABEL_MAX_CHARS)
+        self._install_tab_dnd(btn, win.id)
+        return btn
 
     def _sync_button_state(self, selected: WindowInfo | None) -> None:
         self._updating_buttons = True

@@ -136,6 +136,34 @@ class Controller:
             self._emit_error(str(exc))
         self.sync_now()
 
+    def reorder_to(self, desired_ids: list[str]) -> None:
+        """Reorder windows to match `desired_ids` via selection-sort swaps.
+
+        IDs missing from the current state are skipped, and current
+        windows not in `desired_ids` keep their relative tail position.
+        """
+        ordered = sorted(self._state.windows, key=lambda w: w.index)
+        current = [w.id for w in ordered]
+        desired = [i for i in desired_ids if i in current]
+        # Append any currently-present ids that weren't in desired,
+        # preserving their existing relative order.
+        for cid in current:
+            if cid not in desired:
+                desired.append(cid)
+        if desired == current:
+            return
+        work = list(current)
+        try:
+            for pos, target in enumerate(desired):
+                if work[pos] == target:
+                    continue
+                j = work.index(target)
+                tmux_adapter.swap_windows(work[pos], work[j])
+                work[pos], work[j] = work[j], work[pos]
+        except TmuxError as exc:
+            self._emit_error(str(exc))
+        self.sync_now()
+
     def close_console(self, window_id: str) -> None:
         try:
             tmux_adapter.kill_window(window_id)

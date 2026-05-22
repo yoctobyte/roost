@@ -112,6 +112,43 @@ class SettingsDialog(Gtk.Dialog):
 
         box.add(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
 
+        mouse_section = Gtk.Label(xalign=0.0)
+        mouse_section.set_markup("<b>Mouse mode</b>")
+        box.add(mouse_section)
+
+        self._mouse_vte = Gtk.RadioButton.new_with_label_from_widget(
+            None, "VTE selection (recommended)"
+        )
+        self._mouse_tmux = Gtk.RadioButton.new_with_label_from_widget(
+            self._mouse_vte, "tmux selection (scroll while selecting)"
+        )
+        if current.mouse_mode == "tmux":
+            self._mouse_tmux.set_active(True)
+        else:
+            self._mouse_vte.set_active(True)
+        box.add(self._mouse_vte)
+        box.add(self._mouse_tmux)
+
+        mouse_explain = Gtk.Label(xalign=0.0)
+        mouse_explain.set_line_wrap(True)
+        mouse_explain.set_max_width_chars(60)
+        mouse_explain.set_markup(
+            "<small>"
+            "<b>VTE selection</b> lets you click-drag to select text the "
+            "normal way; the selection sticks after you release the mouse "
+            "and Ctrl+Shift+C copies it. The wheel scrolls back through "
+            "tmux history.\n\n"
+            "<b>tmux selection</b> hands the mouse to tmux, which lets you "
+            "drag <i>across page boundaries</i> — the selection keeps "
+            "growing as you scroll the wheel. Trade-off: tmux owns the "
+            "selection, so a plain release no longer leaves a VTE "
+            "highlight; copy via the right-click menu instead."
+            "</small>"
+        )
+        box.add(mouse_explain)
+
+        box.add(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
+
         section = Gtk.Label(xalign=0.0)
         section.set_markup("<b>Remember tabs across restarts</b>")
         box.add(section)
@@ -157,6 +194,8 @@ class SettingsDialog(Gtk.Dialog):
             auto_color_tabs=self._auto_color_check.get_active(),
             remember_tabs=self._remember_check.get_active(),
             show_status_bar=self._status_bar_check.get_active(),
+            sort_kind=self._current.sort_kind,
+            mouse_mode="tmux" if self._mouse_tmux.get_active() else "vte",
         ).clamp()
 
 

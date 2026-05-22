@@ -46,6 +46,10 @@ MAX_FONT_SIZE = 14
 DEFAULT_REMEMBER_TABS = True
 DEFAULT_AUTO_COLOR_TABS = True
 DEFAULT_SHOW_STATUS_BAR = False
+DEFAULT_SORT_KIND = "folder"
+SORT_KINDS = ("folder", "name", "app", "color", "age")
+DEFAULT_MOUSE_MODE = "vte"
+MOUSE_MODES = ("vte", "tmux")
 
 
 @dataclass
@@ -62,6 +66,12 @@ class Settings:
     auto_color_tabs: bool = DEFAULT_AUTO_COLOR_TABS
     remember_tabs: bool = DEFAULT_REMEMBER_TABS
     show_status_bar: bool = DEFAULT_SHOW_STATUS_BAR
+    sort_kind: str = DEFAULT_SORT_KIND
+    # "vte": tmux mouse off; VTE owns selection, roost handles wheel.
+    # "tmux": tmux mouse on; tmux owns selection (scroll-while-select),
+    #         scroll wheel goes to tmux directly. Selection is captured
+    #         to a tmux buffer; copy via right-click "Copy".
+    mouse_mode: str = DEFAULT_MOUSE_MODE
 
     def clamp(self) -> "Settings":
         size = max(MIN_FONT_SIZE, min(MAX_FONT_SIZE, int(self.overview_font_size)))
@@ -78,6 +88,12 @@ class Settings:
             auto_color_tabs=bool(self.auto_color_tabs),
             remember_tabs=bool(self.remember_tabs),
             show_status_bar=bool(self.show_status_bar),
+            sort_kind=(
+                self.sort_kind if self.sort_kind in SORT_KINDS else DEFAULT_SORT_KIND
+            ),
+            mouse_mode=(
+                self.mouse_mode if self.mouse_mode in MOUSE_MODES else DEFAULT_MOUSE_MODE
+            ),
         )
 
     def theme_obj(self) -> Theme:
