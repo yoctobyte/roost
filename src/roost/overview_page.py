@@ -63,11 +63,11 @@ class OverviewPage(Gtk.ScrolledWindow):
     def set_state(self, state: AppState) -> None:
         seen: set[str] = set()
         for w in state.windows:
-            seen.add(w.id)
-            card = self._cards.get(w.id)
+            seen.add(w.key)
+            card = self._cards.get(w.key)
             if card is None:
                 card = _Card(w, self._on_activate, self._settings)
-                self._cards[w.id] = card
+                self._cards[w.key] = card
                 self._flow.add(card)
             else:
                 card.update(w)
@@ -89,7 +89,7 @@ class _Card(Gtk.EventBox):
         settings: Settings,
     ) -> None:
         super().__init__()
-        self._window_id = info.id
+        self._window_id = info.key
         self._on_activate = on_activate
 
         frame = Gtk.Frame()
