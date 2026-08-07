@@ -24,21 +24,33 @@ def _run(args: list[str], dest: str | None = None) -> str:
     return out
 
 
-def session_exists(name: str) -> bool:
+def session_exists(name: str, dest: str | None = None) -> bool:
     try:
-        _run(["has-session", "-t", f"={name}"])
+        _run(["has-session", "-t", f"={name}"], dest)
         return True
     except TmuxError:
         return False
 
 
-def ensure_session(name: str) -> bool:
-    """Create the session if missing. Returns True if it was created."""
-    created = False
-    if not session_exists(name):
-        _run(["new-session", "-d", "-s", name])
-        created = True
-    return created
+def has_sessions(dest: str | None = None) -> bool:
+    """Whether the box has any tmux session at all.
+
+    Never creates one: roost lists what is already there. A box with no
+    server running is a box with no sessions, not a failure.
+    """
+    try:
+        out = _run(["list-sessions", "-F", "#{session_name}"], dest)
+    except TmuxError:
+        return False
+    return bool(out.strip())
+
+
+def create_session(name: str, dest: str | None = None, cwd: str | None = None) -> str:
+    """Create a detached session. Only ever called for the user."""
+    args = ["new-session", "-d", "-s", name, "-P", "-F", "#{window_id}"]
+    if cwd:
+        args.extend(["-c", cwd])
+    return _run(args, dest).strip()
 
 
 def set_mouse_mode(session: str, on: bool) -> None:
@@ -207,21 +219,24 @@ def capture_preview(window_id: str, lines: int) -> str:
 
 
 def new_window(
-    session: str, name: str | None = None, cwd: str | None = None
+    session: str,
+    name: str | None = None,
+    cwd: str | None = None,
+    dest: str | None = None,
 ) -> str:
     args = ["new-window", "-d", "-t", f"={session}", "-P", "-F", "#{window_id}"]
     if cwd:
         args.extend(["-c", cwd])
     if name:
         args.extend(["-n", name])
-    return _run(args).strip()
+    return _run(args, dest).strip()
 
 
-def send_text(window_id: str, text: str) -> None:
+def send_text(window_id: str, text: str, dest: str | None = None) -> None:
     """Send literal text to a window's foreground pane. No Enter."""
     if not text:
         return
-    _run(["send-keys", "-t", window_id, "-l", text])
+    _run(["send-keys", "-t", window_id, "-l", text], dest)
 
 
 def enter_copy_mode_up(session: str) -> bool:
@@ -286,20 +301,20 @@ def set_status_bar(session: str, on: bool) -> None:
     _run(["set-option", "-t", session, "status", "on" if on else "off"])
 
 
-def rename_window(window_id: str, name: str) -> None:
-    _run(["rename-window", "-t", window_id, name])
+def rename_window(window_id: str, name: str, dest: str | None = None) -> None:
+    _run(["rename-window", "-t", window_id, name], dest)
 
 
-def kill_window(window_id: str) -> None:
-    _run(["kill-window", "-t", window_id])
+def kill_window(window_id: str, dest: str | None = None) -> None:
+    _run(["kill-window", "-t", window_id], dest)
 
 
-def select_window(window_id: str) -> None:
-    _run(["select-window", "-t", window_id])
+def select_window(window_id: str, dest: str | None = None) -> None:
+    _run(["select-window", "-t", window_id], dest)
 
 
-def swap_windows(a: str, b: str) -> None:
-    _run(["swap-window", "-s", a, "-t", b])
+def swap_windows(a: str, b: str, dest: str | None = None) -> None:
+    _run(["swap-window", "-s", a, "-t", b], dest)
 
 
 def list_windows_with_previews(session: str, preview_lines: int) -> list[WindowInfo]:
@@ -323,7 +338,6 @@ def list_windows_with_previews(session: str, preview_lines: int) -> list[WindowI
 # cannot be mistaken for protocol.
 _BATCH_SCRIPT = r"""
 set -u
-session=%(session)s
 lines=%(lines)s
 nonce=%(nonce)s
 
@@ -343,11 +357,11 @@ fg_cmd() {
   tr '\0' ' ' < "/proc/$t/cmdline" 2>/dev/null
 }
 
-rows=$(tmux list-windows -t "=$session" -F \
-  "$nonce W #{window_id}	#{window_index}	#{window_name}	#{window_active}	#{pane_current_command}	#{pane_current_path}	#{pane_pid}") || exit $?
+rows=$(tmux list-windows -a -F \
+  "$nonce W #{window_id}	#{window_index}	#{window_name}	#{window_active}	#{pane_current_command}	#{pane_current_path}	#{pane_pid}	#{session_name}") || exit $?
 printf '%%s\n' "$rows"
 
-printf '%%s\n' "$rows" | while IFS='	' read -r head idx name active cur path pid; do
+printf '%%s\n' "$rows" | while IFS='	' read -r head idx name active cur path pid sess; do
   wid=${head##* }
   printf '%%s C %%s %%s\n' "$nonce" "$wid" "$(fg_cmd "$pid")"
   printf '%%s P %%s\n' "$nonce" "$wid"
@@ -357,23 +371,31 @@ printf '%%s END\n' "$nonce"
 """
 
 
-def fetch_batch(
-    session: str, preview_lines: int, dest: str | None = None
-) -> list[WindowInfo]:
-    """Everything a poll needs, in a single round trip."""
+def fetch_box(dest: str | None, preview_lines: int) -> list[WindowInfo]:
+    """Every window of every session on one box, in a single round trip.
+
+    A box with no tmux server running is not an error -- it is a box
+    with no sessions, which is exactly what an idle machine looks like.
+    """
     nonce = "R" + secrets.token_hex(8)
     script = _BATCH_SCRIPT % {
-        "session": shlex.quote(session),
         "lines": shlex.quote(str(preview_lines)),
         "nonce": shlex.quote(nonce),
     }
     rc, out, err = ssh.run(dest, ["sh", "-s"], stdin=script)
     if rc != 0:
-        raise TmuxError(["list-windows", "-t", f"={session}"], rc, err)
-    return _parse_batch(out, nonce)
+        if _no_server(err):
+            return []
+        raise TmuxError(["list-windows", "-a"], rc, err)
+    return _parse_batch(out, nonce, dest)
 
 
-def _parse_batch(out: str, nonce: str) -> list[WindowInfo]:
+def _no_server(stderr: str) -> bool:
+    lowered = stderr.lower()
+    return "no server running" in lowered or "error connecting to" in lowered
+
+
+def _parse_batch(out: str, nonce: str, dest: str | None = None) -> list[WindowInfo]:
     order: list[str] = []
     fields: dict[str, list[str]] = {}
     commands: dict[str, str] = {}
@@ -386,7 +408,7 @@ def _parse_batch(out: str, nonce: str) -> list[WindowInfo]:
             kind, _, rest = body.partition(" ")
             if kind == "W":
                 parts = rest.split("\t")
-                if len(parts) >= 7:
+                if len(parts) >= 8:
                     wid = parts[0]
                     order.append(wid)
                     fields[wid] = parts
@@ -423,6 +445,8 @@ def _parse_batch(out: str, nonce: str) -> list[WindowInfo]:
                 last_command=commands.get(wid, ""),
                 pane_pid=pane_pid,
                 preview=preview,
+                dest=dest,
+                session=parts[7],
             )
         )
     return windows

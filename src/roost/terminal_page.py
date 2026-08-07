@@ -1,3 +1,4 @@
+import shlex
 import shutil
 from typing import Callable
 
@@ -9,7 +10,7 @@ gi.require_version("Vte", "2.91")
 
 from gi.repository import Gdk, GLib, Gtk, Vte  # noqa: E402
 
-from roost import tmux_adapter  # noqa: E402
+from roost import ssh, tmux_adapter  # noqa: E402
 
 
 class TerminalPage(Gtk.Box):
@@ -17,10 +18,12 @@ class TerminalPage(Gtk.Box):
         self,
         session: str,
         on_child_exited: Callable[[int], None],
+        dest: str | None = None,
     ) -> None:
         super().__init__(orientation=Gtk.Orientation.VERTICAL)
         self._on_child_exited = on_child_exited
         self._session = session
+        self._dest = dest
         self._intercept_scroll = True
         self._smooth_accum = 0.0
 
@@ -31,10 +34,20 @@ class TerminalPage(Gtk.Box):
         self.pack_start(self._vte, True, True, 0)
 
         tmux_bin = shutil.which("tmux") or "/usr/bin/tmux"
+        if dest is None:
+            argv = [tmux_bin, "attach", "-t", f"={session}"]
+        else:
+            # -t forces a pty on the far side, which tmux needs; the
+            # attach itself is an ordinary tmux client over the same
+            # multiplexed connection the polls use.
+            argv = (
+                ssh.ssh_args(dest)[:-1]
+                + ["-t", dest, f"tmux attach -t {shlex.quote('=' + session)}"]
+            )
         self._vte.spawn_async(
             Vte.PtyFlags.DEFAULT,
             None,  # working dir
-            [tmux_bin, "attach", "-t", f"={session}"],
+            argv,
             None,  # envv (inherit)
             GLib.SpawnFlags.DEFAULT,
             None,  # child setup

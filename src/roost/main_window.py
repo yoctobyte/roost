@@ -14,13 +14,15 @@ from roost.models import AppState, WindowInfo
 from roost.overview_page import OverviewPage
 from roost.restore_dialog import RestoreDialog
 from roost.settings import TAB_COLORS, Settings, project_root
+from roost import box_dialog
 from roost.settings_dialog import SettingsDialog
 from roost.terminal_page import TerminalPage
 
 _TAB_DND_TARGET = "application/x-roost-tab"
 
 _STACK_OVERVIEW = "overview"
-_STACK_TERMINAL = "terminal"
+def _terminal_name(dest, session: str) -> str:
+    return f"term\x1f{dest or ''}\x1f{session}"
 
 
 class MainWindow(Gtk.ApplicationWindow):
@@ -31,6 +33,7 @@ class MainWindow(Gtk.ApplicationWindow):
         self._controller = controller
         self._settings: Settings = settings_module.load()
         self._controller.remember_tabs = self._settings.remember_tabs
+        self._controller.set_boxes(self._settings.boxes)
         self._apply_status_bar()
         self._session_lost_shown = False
         self._window_buttons: dict[str, Gtk.ToggleButton] = {}
@@ -104,6 +107,13 @@ class MainWindow(Gtk.ApplicationWindow):
         )
         header.pack_end(self._btn_prefs)
 
+        self._btn_boxes = _hbtn(
+            "network-server-symbolic",
+            "Boxes — add or check another machine",
+            self._action_boxes,
+        )
+        header.pack_end(self._btn_boxes)
+
     def _build_body(self) -> None:
         outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self.add(outer)
@@ -153,17 +163,33 @@ class MainWindow(Gtk.ApplicationWindow):
         self._overview = OverviewPage(self._on_card_activated, self._settings)
         self._stack.add_named(self._overview, _STACK_OVERVIEW)
 
-        self._terminal = TerminalPage(
-            session=self._controller.session,
-            on_child_exited=self._on_terminal_child_exited,
-        )
-        theme = self._settings.theme_obj()
-        self._terminal.apply_theme(
-            theme.fg, theme.bg, self._settings.terminal_palette()
-        )
-        self._stack.add_named(self._terminal, _STACK_TERMINAL)
+        # A VTE can only be attached to one tmux session, so each
+        # (box, session) gets its own page, built the first time a tab
+        # belonging to it is opened. Attaching eagerly to every session
+        # would spawn an ssh client per box at startup.
+        self._terminals: dict[tuple, TerminalPage] = {}
+        self._terminal: TerminalPage | None = None
 
         self._show_overview()
+
+    def _terminal_for(self, dest, session: str) -> TerminalPage:
+        page = self._terminals.get((dest, session))
+        if page is None:
+            page = TerminalPage(
+                session=session,
+                on_child_exited=self._on_terminal_child_exited,
+                dest=dest,
+            )
+            theme = self._settings.theme_obj()
+            page.apply_theme(
+                theme.fg, theme.bg, self._settings.terminal_palette()
+            )
+            page.set_intercept_scroll(self._settings.mouse_mode != "tmux")
+            self._terminals[(dest, session)] = page
+            self._stack.add_named(page, _terminal_name(dest, session))
+            page.show_all()
+        self._terminal = page
+        return page
 
     def _build_accelerators(self) -> None:
         group = Gtk.AccelGroup()
@@ -244,7 +270,7 @@ class MainWindow(Gtk.ApplicationWindow):
             return
         keyfn = self._sort_keyfn(kind)
         desired = sorted(windows, key=keyfn)
-        self._controller.reorder_to([w.id for w in desired])
+        self._controller.reorder_to([w.key for w in desired])
 
     def _sort_keyfn(self, kind: str):
         settings = self._settings
@@ -271,6 +297,22 @@ class MainWindow(Gtk.ApplicationWindow):
             )
         return folder_key
 
+    def _action_boxes(self) -> None:
+        """Add a box straight from the header bar."""
+        dialog = box_dialog.AddBoxDialog(self)
+        try:
+            if dialog.run() != Gtk.ResponseType.OK:
+                return
+            dest = dialog.get_dest()
+        finally:
+            dialog.destroy()
+        if not dest or dest in self._settings.boxes:
+            return
+        self._settings.boxes.append(dest)
+        settings_module.save(self._settings)
+        self._controller.set_boxes(self._settings.boxes)
+        self._controller.sync_now()
+
     def _action_preferences(self) -> None:
         dialog = SettingsDialog(self, self._settings)
         try:
@@ -286,10 +328,12 @@ class MainWindow(Gtk.ApplicationWindow):
     def _apply_settings(self) -> None:
         self._overview.apply_settings(self._settings)
         theme = self._settings.theme_obj()
-        self._terminal.apply_theme(
-            theme.fg, theme.bg, self._settings.terminal_palette()
-        )
+        for page in self._terminals.values():
+            page.apply_theme(
+                theme.fg, theme.bg, self._settings.terminal_palette()
+            )
         self._controller.remember_tabs = self._settings.remember_tabs
+        self._controller.set_boxes(self._settings.boxes)
         self._apply_status_bar()
         self._apply_mouse_mode()
         self._refresh_all_tab_colors()
@@ -313,7 +357,8 @@ class MainWindow(Gtk.ApplicationWindow):
             tmux_adapter.set_mouse_mode(self._controller.session, on)
         except tmux_adapter.TmuxError:
             pass
-        self._terminal.set_intercept_scroll(not on)
+        for page in self._terminals.values():
+            page.set_intercept_scroll(not on)
 
     def _action_rename(self) -> None:
         win = self._controller.selected_window()
@@ -322,13 +367,13 @@ class MainWindow(Gtk.ApplicationWindow):
         new = _prompt(self, "Rename console", "New name:", win.name)
         if new is None or not new.strip():
             return
-        self._controller.rename_console(win.id, new.strip())
+        self._controller.rename_console(win.key, new.strip())
 
     def _action_close(self) -> None:
         win = self._controller.selected_window()
         if win is None:
             return
-        self._controller.close_console(win.id)
+        self._controller.close_console(win.key)
         self._show_overview()
 
     # -- events -----------------------------------------------------------
@@ -363,13 +408,13 @@ class MainWindow(Gtk.ApplicationWindow):
     def _on_state_changed(self, state: AppState) -> None:
         self._overview.set_state(state)
         self._rebuild_window_buttons(state)
-        selected = state.by_id(state.selected_id) if state.selected_id else None
+        selected = state.by_key(state.selected_id) if state.selected_id else None
         self._sync_button_state(selected)
         if selected is None:
             self._show_overview()
 
     def _rebuild_window_buttons(self, state: AppState) -> None:
-        new_ids = [w.id for w in state.windows]
+        new_ids = [w.key for w in state.windows]
         existing_ids = list(self._window_buttons.keys())
         if new_ids != existing_ids:
             # Order or membership changed (sort, swap, close, new). Tear
@@ -382,30 +427,30 @@ class MainWindow(Gtk.ApplicationWindow):
             self._button_css.clear()
             for win in state.windows:
                 btn = self._make_window_button(win)
-                self._window_buttons[win.id] = btn
+                self._window_buttons[win.key] = btn
                 self._tab_strip.add(btn)
-                self._apply_tab_color(btn, win.id, win.current_path)
+                self._apply_tab_color(btn, win.key, win.current_path)
                 btn.set_tooltip_text(_format_tooltip(win))
         else:
             for win in state.windows:
-                btn = self._window_buttons[win.id]
+                btn = self._window_buttons[win.key]
                 inner = btn.get_child()
                 if isinstance(inner, Gtk.Label):
                     inner.set_text(f"{win.index}: {win.name}")
                 btn.set_tooltip_text(_format_tooltip(win))
-                self._apply_tab_color(btn, win.id, win.current_path)
+                self._apply_tab_color(btn, win.key, win.current_path)
         self._tab_strip.show_all()
 
     def _make_window_button(self, win: WindowInfo) -> Gtk.ToggleButton:
         btn = Gtk.ToggleButton(label=f"{win.index}: {win.name}")
         btn.set_can_focus(False)
-        btn.connect("toggled", self._on_window_button_toggled, win.id)
-        btn.connect("button-press-event", self._on_tab_button_press, win.id)
+        btn.connect("toggled", self._on_window_button_toggled, win.key)
+        btn.connect("button-press-event", self._on_tab_button_press, win.key)
         inner = btn.get_child()
         if isinstance(inner, Gtk.Label):
             inner.set_ellipsize(Pango.EllipsizeMode.END)
             inner.set_max_width_chars(TAB_LABEL_MAX_CHARS)
-        self._install_tab_dnd(btn, win.id)
+        self._install_tab_dnd(btn, win.key)
         return btn
 
     def _sync_button_state(self, selected: WindowInfo | None) -> None:
@@ -413,7 +458,7 @@ class MainWindow(Gtk.ApplicationWindow):
         try:
             self._overview_button.set_active(selected is None)
             for wid, btn in self._window_buttons.items():
-                btn.set_active(selected is not None and wid == selected.id)
+                btn.set_active(selected is not None and wid == selected.key)
         finally:
             self._updating_buttons = False
 
@@ -426,8 +471,13 @@ class MainWindow(Gtk.ApplicationWindow):
         self._updating_buttons = False
 
     def _show_terminal(self) -> None:
-        self._stack.set_visible_child_name(_STACK_TERMINAL)
-        self._terminal.grab_focus()
+        win = self._controller.selected_window()
+        if win is None:
+            self._show_overview()
+            return
+        page = self._terminal_for(win.dest, win.session)
+        self._stack.set_visible_child_name(_terminal_name(win.dest, win.session))
+        page.grab_focus()
 
     def _on_error(self, message: str) -> None:
         if "no server" in message or "can't find session" in message:
@@ -436,15 +486,27 @@ class MainWindow(Gtk.ApplicationWindow):
         _toast(self, message)
 
     def _on_terminal_child_exited(self, _status: int) -> None:
-        # The VTE child (our `tmux attach` client) also exits during a
-        # normal window close — ask tmux whether the session is actually
-        # gone before alarming the user.
-        try:
-            if tmux_adapter.session_exists(self._controller.session):
-                return
-        except Exception:
-            pass
+        # The attach client exits on a normal window close too, and with
+        # many sessions in play one of them ending is unremarkable. Only
+        # worry when nothing is left to show anywhere.
+        self._drop_dead_terminals()
+        if self._controller.state.windows:
+            self._show_overview()
+            return
         self._show_session_lost()
+
+    def _drop_dead_terminals(self) -> None:
+        """Forget pages whose (box, session) no longer exists.
+
+        The page is destroyed so that reopening that session later
+        spawns a fresh attach rather than reusing a dead terminal.
+        """
+        live = set(self._controller.state.sources())
+        for source in [k for k in self._terminals if k not in live]:
+            page = self._terminals.pop(source)
+            if page is self._terminal:
+                self._terminal = None
+            page.destroy()
 
     def _show_session_lost(self) -> None:
         if self._session_lost_shown:
@@ -541,7 +603,7 @@ class MainWindow(Gtk.ApplicationWindow):
             return False
         if event.button != Gdk.BUTTON_SECONDARY:
             return False
-        win = self._controller.state.by_id(window_id)
+        win = self._controller.state.by_key(window_id)
         if win is None:
             return False
         self._show_tab_menu(event, win)
@@ -612,10 +674,10 @@ class MainWindow(Gtk.ApplicationWindow):
         new = _prompt(self, "Rename console", "New name:", win.name)
         if new is None or not new.strip():
             return
-        self._controller.rename_console(win.id, new.strip())
+        self._controller.rename_console(win.key, new.strip())
 
     def _tab_close(self, win: WindowInfo) -> None:
-        self._controller.close_console(win.id)
+        self._controller.close_console(win.key)
 
     def _tab_set_color(self, win: WindowInfo, color_key: str) -> None:
         cwd = win.current_path or ""
@@ -636,13 +698,14 @@ class MainWindow(Gtk.ApplicationWindow):
 
     def _refresh_all_tab_colors(self) -> None:
         for wid, btn in self._window_buttons.items():
-            w = self._controller.state.by_id(wid)
+            w = self._controller.state.by_key(wid)
             if w is None:
                 continue
             self._apply_tab_color(btn, wid, w.current_path or "")
 
     def _on_window_focus_in(self, _widget, _event) -> bool:
-        if self._stack.get_visible_child_name() == _STACK_TERMINAL:
+        name = self._stack.get_visible_child_name() or ""
+        if name.startswith("term\x1f") and self._terminal is not None:
             self._terminal.grab_focus()
         return False
 
