@@ -19,7 +19,7 @@ gi.require_version("Vte", "2.91")
 
 from gi.repository import GLib, Gtk, Vte  # noqa: E402
 
-from roost import ssh  # noqa: E402
+from roost import settings, ssh  # noqa: E402
 
 _STATUS_TEXT = {
     ssh.READY: ("✓", "ready"),
@@ -131,7 +131,16 @@ class AddBoxDialog(Gtk.Dialog):
     def _on_probed(self, state: str, detail: str) -> None:
         self._spinner.stop()
         self._check_btn.set_sensitive(True)
-        self._status.set_markup(status_markup(state, detail))
+        marker = settings.host_marker(self.get_dest())
+        text = status_markup(state, detail)
+        if state == ssh.READY and marker:
+            # Say up front how this box's tabs will be marked, since the
+            # mark is the only thing telling them apart from local ones.
+            text += (
+                f"  <small>tabs marked "
+                f"<b>{GLib.markup_escape_text(marker)}</b></small>"
+            )
+        self._status.set_markup(text)
         # A box that is merely offline is still worth adding -- it may
         # be a laptop that is usually shut. Only a missing key has a fix
         # to offer here.

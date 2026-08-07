@@ -436,13 +436,17 @@ class MainWindow(Gtk.ApplicationWindow):
                 btn = self._window_buttons[win.key]
                 inner = btn.get_child()
                 if isinstance(inner, Gtk.Label):
-                    inner.set_text(f"{win.index}: {win.name}")
+                    inner.set_text(
+                        settings_module.label_for(win.dest, win.index, win.name)
+                    )
                 btn.set_tooltip_text(_format_tooltip(win))
                 self._apply_tab_color(btn, win.key, win.current_path)
         self._tab_strip.show_all()
 
     def _make_window_button(self, win: WindowInfo) -> Gtk.ToggleButton:
-        btn = Gtk.ToggleButton(label=f"{win.index}: {win.name}")
+        btn = Gtk.ToggleButton(
+            label=settings_module.label_for(win.dest, win.index, win.name)
+        )
         btn.set_can_focus(False)
         btn.connect("toggled", self._on_window_button_toggled, win.key)
         btn.connect("button-press-event", self._on_tab_button_press, win.key)
@@ -745,7 +749,11 @@ class MainWindow(Gtk.ApplicationWindow):
 
 
 def _format_tooltip(win: WindowInfo) -> str:
-    lines = [f"{win.index}: {win.name}"]
+    lines = [settings_module.label_for(win.dest, win.index, win.name)]
+    where = win.box_label
+    if win.session:
+        where = f"{where} · session {win.session}"
+    lines.append(where)
     if win.last_command:
         lines.append(f"run: {win.last_command}")
     elif win.current_command:

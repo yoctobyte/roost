@@ -14,7 +14,7 @@ from roost.config import (
     OVERVIEW_PREVIEW_ROWS,
 )
 from roost.models import AppState, WindowInfo
-from roost.settings import Settings
+from roost.settings import Settings, label_for
 
 
 class OverviewPage(Gtk.ScrolledWindow):
@@ -147,8 +147,9 @@ class _Card(Gtk.EventBox):
         self._preview.override_color(Gtk.StateFlags.NORMAL, fg)
 
     def update(self, info: WindowInfo) -> None:
-        marker = " *" if info.active else ""
-        self._title.set_text(f"{info.index}: {info.name}{marker}")
+        active = " *" if info.active else ""
+        title = label_for(info.dest, info.index, info.name)
+        self._title.set_text(f"{title}{active}")
         self._preview.set_text(_clip_preview(info.preview or ""))
 
 

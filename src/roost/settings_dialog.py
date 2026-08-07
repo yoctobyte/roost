@@ -6,6 +6,7 @@ from gi.repository import Gtk  # noqa: E402
 
 from roost import box_dialog  # noqa: E402
 from roost.settings import (
+    host_marker,
     MAX_FONT_SIZE,
     MIN_FONT_SIZE,
     Settings,
@@ -247,9 +248,9 @@ class SettingsDialog(Gtk.Dialog):
             self._boxes_list.remove(child)
         # This machine is always watched and cannot be removed, so it is
         # shown for completeness rather than as a configurable entry.
-        self._add_box_row(None, "This machine")
+        self._add_box_row(None, "This machine (unmarked)")
         for dest in self._boxes:
-            self._add_box_row(dest, dest)
+            self._add_box_row(dest, f"{host_marker(dest)}  {dest}")
         self._boxes_list.show_all()
         self._remove_box_btn.set_sensitive(bool(self._boxes))
 
