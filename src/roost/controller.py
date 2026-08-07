@@ -1,3 +1,4 @@
+import threading
 from typing import Callable
 
 import gi
@@ -41,6 +42,12 @@ class Controller:
         # across polls so a window sitting idle at a prompt still knows
         # what it last ran.
         self._command_memory: dict[str, tuple[str, str]] = {}
+        # Polling runs on a worker thread. Locally a poll costs about a
+        # millisecond, but once a host is reached over ssh it is tens of
+        # milliseconds at best and seconds when the box is unreachable --
+        # which would freeze the GUI if it ran on the main loop.
+        self._poll_thread: threading.Thread | None = None
+        self._stopped = False
 
     @property
     def session(self) -> str:
@@ -78,11 +85,18 @@ class Controller:
         self._maybe_save_snapshot(self._state)
 
     def stop(self) -> None:
+        self._stopped = True
         if self._poll_source is not None:
             GLib.source_remove(self._poll_source)
             self._poll_source = None
 
     def sync_now(self) -> None:
+        """Refresh synchronously.
+
+        Used after a user-initiated mutation, where the caller wants the
+        new state reflected immediately. The repeating poll goes through
+        _tick instead, which does the same work on a worker thread.
+        """
         try:
             windows = tmux_adapter.list_windows_with_previews(
                 self._session, PREVIEW_LINES
@@ -90,6 +104,9 @@ class Controller:
         except TmuxError as exc:
             self._emit_error(str(exc))
             return
+        self._apply_windows(windows)
+
+    def _apply_windows(self, windows) -> None:
         selected = self._state.selected_id
         if selected is not None and not any(w.id == selected for w in windows):
             selected = None
@@ -230,8 +247,42 @@ class Controller:
         return self._state.by_id(self._state.selected_id)
 
     def _tick(self) -> bool:
-        self.sync_now()
+        """Kick off a background poll, unless one is still running.
+
+        Skipping while a fetch is in flight means a slow or unreachable
+        host throttles itself instead of queueing up threads.
+        """
+        if self._stopped:
+            return False
+        if self._poll_thread is not None and self._poll_thread.is_alive():
+            return True
+        self._poll_thread = threading.Thread(target=self._poll_worker, daemon=True)
+        self._poll_thread.start()
         return True
+
+    def _poll_worker(self) -> None:
+        try:
+            windows = tmux_adapter.list_windows_with_previews(
+                self._session, PREVIEW_LINES
+            )
+        except TmuxError as exc:
+            message = str(exc)
+            GLib.idle_add(self._deliver_error, message)
+            return
+        GLib.idle_add(self._deliver_windows, windows)
+
+    def _deliver_windows(self, windows) -> bool:
+        # Back on the main thread: safe to touch state and widgets.
+        if self._stopped:
+            return False
+        self._apply_windows(windows)
+        return False
+
+    def _deliver_error(self, message: str) -> bool:
+        if self._stopped:
+            return False
+        self._emit_error(message)
+        return False
 
     def restore_windows(self, entries) -> None:
         for w in entries:

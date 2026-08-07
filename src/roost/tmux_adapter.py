@@ -89,11 +89,6 @@ def show_buffer() -> str:
         return ""
 
 
-def kill_session(name: str) -> None:
-    if session_exists(name):
-        _run(["kill-session", "-t", f"={name}"])
-
-
 _LIST_FMT = (
     "#{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t"
     "#{pane_current_command}\t#{pane_current_path}\t#{pane_pid}"
