@@ -72,6 +72,13 @@ class MainWindow(Gtk.ApplicationWindow):
         self._btn_new = _hbtn("document-new-symbolic", "New console", self._action_new)
         header.pack_start(self._btn_new)
 
+        self._btn_boxes = _hbtn(
+            "network-server-symbolic",
+            "Boxes — add or check another machine",
+            self._action_boxes,
+        )
+        header.pack_start(self._btn_boxes)
+
         self._btn_overview = _hbtn(
             "view-grid-symbolic", "Show overview", self._action_overview
         )
@@ -106,13 +113,6 @@ class MainWindow(Gtk.ApplicationWindow):
             self._action_preferences,
         )
         header.pack_end(self._btn_prefs)
-
-        self._btn_boxes = _hbtn(
-            "network-server-symbolic",
-            "Boxes — add or check another machine",
-            self._action_boxes,
-        )
-        header.pack_end(self._btn_boxes)
 
     def _build_body(self) -> None:
         outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
