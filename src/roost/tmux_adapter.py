@@ -1,6 +1,9 @@
+import secrets
+import shlex
 import subprocess
 from dataclasses import replace
 
+from roost import ssh
 from roost.models import WindowInfo
 
 
@@ -14,15 +17,11 @@ class TmuxError(RuntimeError):
         self.stderr = stderr
 
 
-def _run(args: list[str]) -> str:
-    proc = subprocess.run(
-        ["tmux", *args],
-        capture_output=True,
-        text=True,
-    )
-    if proc.returncode != 0:
-        raise TmuxError(args, proc.returncode, proc.stderr)
-    return proc.stdout
+def _run(args: list[str], dest: str | None = None) -> str:
+    rc, out, err = ssh.run(dest, ["tmux", *args])
+    if rc != 0:
+        raise TmuxError(args, rc, err)
+    return out
 
 
 def session_exists(name: str) -> bool:
@@ -304,7 +303,126 @@ def swap_windows(a: str, b: str) -> None:
 
 
 def list_windows_with_previews(session: str, preview_lines: int) -> list[WindowInfo]:
+    """Naive fetch: one tmux call per window plus one to list them.
+
+    Kept as the reference implementation that fetch_batch is pinned
+    against; fetch_batch is what actually runs, because this shape costs
+    a full round trip per window once a box is reached over ssh.
+    """
     windows = list_windows(session)
     return [
         replace(w, preview=capture_preview(w.id, preview_lines)) for w in windows
     ]
+
+
+# One round trip has to carry everything a poll needs: the window list,
+# each pane's foreground argv (which means reading /proc on the box that
+# owns the process, not ours), and every preview. Markers are prefixed
+# with a per-call nonce so that pane content -- which is arbitrary text
+# and could contain anything we might otherwise use as a delimiter --
+# cannot be mistaken for protocol.
+_BATCH_SCRIPT = r"""
+set -u
+session=%(session)s
+lines=%(lines)s
+nonce=%(nonce)s
+
+fg_cmd() {
+  p=$1
+  [ -r "/proc/$p/stat" ] || return 0
+  s=$(cat "/proc/$p/stat" 2>/dev/null) || return 0
+  rest=${s##*\)}
+  # After the comm field: state ppid pgrp session tty_nr tpgid
+  set -- $rest
+  [ $# -ge 6 ] || return 0
+  t=$6
+  case "$t" in ''|*[!0-9-]*) return 0 ;; esac
+  [ "$t" -gt 0 ] || return 0
+  [ "$t" = "$p" ] && return 0
+  [ -r "/proc/$t/cmdline" ] || return 0
+  tr '\0' ' ' < "/proc/$t/cmdline" 2>/dev/null
+}
+
+rows=$(tmux list-windows -t "=$session" -F \
+  "$nonce W #{window_id}	#{window_index}	#{window_name}	#{window_active}	#{pane_current_command}	#{pane_current_path}	#{pane_pid}") || exit $?
+printf '%%s\n' "$rows"
+
+printf '%%s\n' "$rows" | while IFS='	' read -r head idx name active cur path pid; do
+  wid=${head##* }
+  printf '%%s C %%s %%s\n' "$nonce" "$wid" "$(fg_cmd "$pid")"
+  printf '%%s P %%s\n' "$nonce" "$wid"
+  tmux capture-pane -p -J -t "$wid" -S "-$lines" 2>/dev/null
+done
+printf '%%s END\n' "$nonce"
+"""
+
+
+def fetch_batch(
+    session: str, preview_lines: int, dest: str | None = None
+) -> list[WindowInfo]:
+    """Everything a poll needs, in a single round trip."""
+    nonce = "R" + secrets.token_hex(8)
+    script = _BATCH_SCRIPT % {
+        "session": shlex.quote(session),
+        "lines": shlex.quote(str(preview_lines)),
+        "nonce": shlex.quote(nonce),
+    }
+    rc, out, err = ssh.run(dest, ["sh", "-s"], stdin=script)
+    if rc != 0:
+        raise TmuxError(["list-windows", "-t", f"={session}"], rc, err)
+    return _parse_batch(out, nonce)
+
+
+def _parse_batch(out: str, nonce: str) -> list[WindowInfo]:
+    order: list[str] = []
+    fields: dict[str, list[str]] = {}
+    commands: dict[str, str] = {}
+    previews: dict[str, list[str]] = {}
+    current: str | None = None
+
+    for line in out.split("\n"):
+        if line.startswith(nonce + " "):
+            body = line[len(nonce) + 1 :]
+            kind, _, rest = body.partition(" ")
+            if kind == "W":
+                parts = rest.split("\t")
+                if len(parts) >= 7:
+                    wid = parts[0]
+                    order.append(wid)
+                    fields[wid] = parts
+                current = None
+            elif kind == "C":
+                wid, _, cmd = rest.partition(" ")
+                commands[wid] = cmd.strip()
+                current = None
+            elif kind == "P":
+                current = rest.strip()
+                previews[current] = []
+            else:  # END
+                current = None
+            continue
+        if current is not None:
+            previews[current].append(line)
+
+    windows: list[WindowInfo] = []
+    for wid in order:
+        parts = fields[wid]
+        try:
+            pane_pid = int(parts[6])
+        except ValueError:
+            pane_pid = 0
+        preview = "\n".join(previews.get(wid, [])).rstrip("\n")
+        windows.append(
+            WindowInfo(
+                id=wid,
+                index=int(parts[1]),
+                name=parts[2],
+                active=(parts[3] == "1"),
+                current_command=parts[4],
+                current_path=parts[5],
+                last_command=commands.get(wid, ""),
+                pane_pid=pane_pid,
+                preview=preview,
+            )
+        )
+    return windows

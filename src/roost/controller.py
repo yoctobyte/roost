@@ -18,8 +18,12 @@ ErrorListener = Callable[[str], None]
 
 
 class Controller:
-    def __init__(self) -> None:
+    def __init__(self, dest: str | None = None) -> None:
         self._session = SESSION_NAME
+        # ssh destination of the box this controller talks to, or None
+        # for this machine. Still always None until the GUI can add a
+        # box; the plumbing below is already destination-agnostic.
+        self._dest = dest
         self._state = AppState()
         self._state_listeners: list[StateListener] = []
         self._error_listeners: list[ErrorListener] = []
@@ -98,8 +102,8 @@ class Controller:
         _tick instead, which does the same work on a worker thread.
         """
         try:
-            windows = tmux_adapter.list_windows_with_previews(
-                self._session, PREVIEW_LINES
+            windows = tmux_adapter.fetch_batch(
+                self._session, PREVIEW_LINES, self._dest
             )
         except TmuxError as exc:
             self._emit_error(str(exc))
@@ -262,8 +266,8 @@ class Controller:
 
     def _poll_worker(self) -> None:
         try:
-            windows = tmux_adapter.list_windows_with_previews(
-                self._session, PREVIEW_LINES
+            windows = tmux_adapter.fetch_batch(
+                self._session, PREVIEW_LINES, self._dest
             )
         except TmuxError as exc:
             message = str(exc)
