@@ -37,23 +37,27 @@ TAB_COLORS: dict[str, TabColor] = {
 # Tab colour already carries the working folder, so the box needs a
 # second, independent channel. These are geometric shapes from the BMP:
 # they render in essentially any UI font, read as marks rather than
-# letters, and stay legible against every tab colour. This machine gets
-# no mark at all, so an unmarked tab always means "here".
+# letters, and stay legible against every tab colour.
 HOST_MARKERS = ("●", "◆", "■", "▲", "★", "▼", "◉", "◈")
+
+# This machine has its own mark, held out of the pool above so a remote
+# box can never be assigned it. A house reads as "here" without having
+# to be looked up, and every box having a mark beats one box being the
+# odd one out with a blank where the others have a symbol.
+LOCAL_MARKER = "⌂"
 
 
 def host_marker(dest: str | None) -> str:
-    """A stable mark for a box, or "" for this machine."""
+    """A stable mark for a box; this machine always gets LOCAL_MARKER."""
     if not dest:
-        return ""
+        return LOCAL_MARKER
     h = zlib.crc32(str(dest).encode("utf-8", "replace"))
     return HOST_MARKERS[h % len(HOST_MARKERS)]
 
 
 def label_for(dest: str | None, index: int, name: str) -> str:
-    """Tab/card title, marked with its box when it is not this one."""
-    marker = host_marker(dest)
-    return f"{marker} {index}: {name}" if marker else f"{index}: {name}"
+    """Tab/card title, marked with the box it lives on."""
+    return f"{host_marker(dest)} {index}: {name}"
 
 
 THEMES: dict[str, Theme] = {

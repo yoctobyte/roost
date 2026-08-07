@@ -133,7 +133,7 @@ class AddBoxDialog(Gtk.Dialog):
         self._check_btn.set_sensitive(True)
         marker = settings.host_marker(self.get_dest())
         text = status_markup(state, detail)
-        if state == ssh.READY and marker:
+        if state == ssh.READY:
             # Say up front how this box's tabs will be marked, since the
             # mark is the only thing telling them apart from local ones.
             text += (
