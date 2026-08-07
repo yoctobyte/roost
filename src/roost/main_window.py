@@ -74,7 +74,7 @@ class MainWindow(Gtk.ApplicationWindow):
 
         self._btn_boxes = _hbtn(
             "network-server-symbolic",
-            "Boxes — add or check another machine",
+            "Boxes — start a session on one, or add another",
             self._action_boxes,
         )
         header.pack_start(self._btn_boxes)
@@ -298,7 +298,49 @@ class MainWindow(Gtk.ApplicationWindow):
         return folder_key
 
     def _action_boxes(self) -> None:
-        """Add a box straight from the header bar."""
+        """Menu of every box: start a session on one, or add another.
+
+        Starting a session is the only way to get a foothold on a box
+        that has none, so it has to be reachable without one already
+        being open there -- the new-console button can only ever add to
+        a session that exists.
+        """
+        menu = self._build_boxes_menu()
+        menu.attach_to_widget(self._btn_boxes, None)
+        menu.popup_at_widget(
+            self._btn_boxes,
+            Gdk.Gravity.SOUTH_WEST,
+            Gdk.Gravity.NORTH_WEST,
+            None,
+        )
+
+    def _build_boxes_menu(self) -> Gtk.Menu:
+        menu = Gtk.Menu()
+        for dest in self._controller.boxes:
+            marker = settings_module.host_marker(dest)
+            label = dest or "this machine"
+            if self._controller.is_offline(dest):
+                label += " (offline)"
+            item = Gtk.MenuItem(label=f"New session on {marker} {label}")
+            item.set_sensitive(not self._controller.is_offline(dest))
+            item.connect(
+                "activate", lambda _i, d=dest: self._on_new_session(d)
+            )
+            menu.append(item)
+
+        menu.append(Gtk.SeparatorMenuItem())
+        add_item = Gtk.MenuItem(label="Add box…")
+        add_item.connect("activate", lambda *_: self._add_box())
+        menu.append(add_item)
+
+        menu.show_all()
+        return menu
+
+    def _on_new_session(self, dest: str | None) -> None:
+        self._controller.new_session(dest)
+        self._show_terminal()
+
+    def _add_box(self) -> None:
         dialog = box_dialog.AddBoxDialog(self)
         try:
             if dialog.run() != Gtk.ResponseType.OK:

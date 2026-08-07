@@ -207,6 +207,40 @@ class Controller:
                 )
                 break
 
+    @property
+    def boxes(self) -> list[str | None]:
+        return list(self._boxes)
+
+    def is_offline(self, dest: str | None) -> bool:
+        return dest in self._reported_offline
+
+    def new_session(self, dest: str | None = None, name: str | None = None) -> None:
+        """Start a session on a box, and select it.
+
+        The name is nudged until it is free rather than reused, because
+        tmux would otherwise refuse -- and a box may already hold a
+        session called "roost" that the user started themselves.
+        """
+        taken = {w.session for w in self._state.windows if w.dest == dest}
+        base = name or self._session
+        candidate = base
+        suffix = 2
+        while candidate in taken:
+            candidate = f"{base}-{suffix}"
+            suffix += 1
+        try:
+            tmux_adapter.create_session(candidate, dest)
+        except TmuxError as exc:
+            self._emit_error(str(exc))
+            return
+        self.sync_now(dest)
+        for w in self._state.windows:
+            if w.dest == dest and w.session == candidate:
+                self._set_state(
+                    AppState(windows=self._state.windows, selected_id=w.key)
+                )
+                break
+
     def _resolve(self, key: str) -> WindowInfo | None:
         return self._state.by_key(key)
 
