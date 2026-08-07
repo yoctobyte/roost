@@ -126,6 +126,37 @@ def resolve(dest: str) -> dict[str, str]:
     return out
 
 
+DEFAULT_KEY = "~/.ssh/id_ed25519"
+
+
+def has_local_key() -> bool:
+    """Whether this machine has any ssh public key to offer a box."""
+    ssh_dir = os.path.expanduser("~/.ssh")
+    try:
+        return any(n.endswith(".pub") for n in os.listdir(ssh_dir))
+    except OSError:
+        return False
+
+
+def key_install_command(dest: str) -> str:
+    """Shell to run interactively in a terminal to authorise this box.
+
+    Deliberately a real command in a real pty rather than something
+    roost drives: the passphrase and the box's password stay between
+    the user and ssh, roost never sees or stores them, and the
+    unknown-host-key prompt -- which BatchMode can only fail on -- gets
+    answered here, once, by a human.
+    """
+    quoted = shlex.quote(dest)
+    key = DEFAULT_KEY
+    return (
+        f'if [ ! -f {key}.pub ]; then '
+        f'echo "No ssh key yet -- creating one."; '
+        f'ssh-keygen -t ed25519 -f {key} || exit 1; fi; '
+        f'ssh-copy-id -i {key}.pub {quoted}'
+    )
+
+
 def probe(dest: str | None) -> tuple[str, str]:
     """Check whether a box is usable. Returns (state, detail).
 

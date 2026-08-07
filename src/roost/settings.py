@@ -75,6 +75,10 @@ class Settings:
     #         scroll wheel goes to tmux directly. Selection is captured
     #         to a tmux buffer; copy via right-click "Copy".
     mouse_mode: str = DEFAULT_MOUSE_MODE
+    # ssh destinations of the other boxes to watch, as typed -- an alias
+    # from ~/.ssh/config, or user@host. This machine is always present
+    # and is not listed here.
+    boxes: list = field(default_factory=list)
     # Remap the terminal's indexed colors so every one of them stays
     # readable against the theme background. Trades ANSI fidelity for
     # legibility -- the point is monitoring processes, not rendering.
@@ -102,6 +106,7 @@ class Settings:
                 self.mouse_mode if self.mouse_mode in MOUSE_MODES else DEFAULT_MOUSE_MODE
             ),
             fix_contrast=bool(self.fix_contrast),
+            boxes=_clean_boxes(self.boxes),
         )
 
     def theme_obj(self) -> Theme:
@@ -154,6 +159,16 @@ class Settings:
             self.cwd_colors.pop(key_path, None)
         else:
             self.cwd_colors[key_path] = color_key
+
+
+def _clean_boxes(boxes) -> list:
+    """Trimmed, de-duplicated destinations, original order preserved."""
+    out: list[str] = []
+    for raw in boxes or []:
+        dest = str(raw).strip()
+        if dest and dest not in out:
+            out.append(dest)
+    return out
 
 
 _KNOWN_PARENTS = {

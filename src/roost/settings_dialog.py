@@ -4,6 +4,7 @@ gi.require_version("Gtk", "3.0")
 
 from gi.repository import Gtk  # noqa: E402
 
+from roost import box_dialog  # noqa: E402
 from roost.settings import (
     MAX_FONT_SIZE,
     MIN_FONT_SIZE,
@@ -75,6 +76,45 @@ class SettingsDialog(Gtk.Dialog):
             "</small>"
         )
         box.add(contrast_explain)
+
+        box.add(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
+
+        boxes_section = Gtk.Label(xalign=0.0)
+        boxes_section.set_markup("<b>Boxes</b>")
+        box.add(boxes_section)
+
+        boxes_explain = Gtk.Label(xalign=0.0)
+        boxes_explain.set_line_wrap(True)
+        boxes_explain.set_max_width_chars(60)
+        boxes_explain.set_markup(
+            "<small>"
+            "Other machines to watch, reached over ssh. Each box shows "
+            "the tmux sessions belonging to the user roost connects as, "
+            "whoever started them. Boxes are never modified on connect "
+            "— roost only lists what is already there."
+            "</small>"
+        )
+        box.add(boxes_explain)
+
+        self._boxes: list[str] = list(current.boxes)
+        self._boxes_list = Gtk.ListBox()
+        self._boxes_list.set_selection_mode(Gtk.SelectionMode.SINGLE)
+        boxes_frame = Gtk.Frame()
+        boxes_frame.add(self._boxes_list)
+        box.add(boxes_frame)
+
+        boxes_buttons = Gtk.Box(
+            orientation=Gtk.Orientation.HORIZONTAL, spacing=6
+        )
+        add_box_btn = Gtk.Button(label="Add box…")
+        add_box_btn.connect("clicked", lambda *_: self._on_add_box())
+        boxes_buttons.pack_start(add_box_btn, False, False, 0)
+        self._remove_box_btn = Gtk.Button(label="Remove")
+        self._remove_box_btn.connect("clicked", lambda *_: self._on_remove_box())
+        boxes_buttons.pack_start(self._remove_box_btn, False, False, 0)
+        box.add(boxes_buttons)
+
+        self._rebuild_boxes()
 
         box.add(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
 
@@ -202,6 +242,56 @@ class SettingsDialog(Gtk.Dialog):
 
         self.show_all()
 
+    def _rebuild_boxes(self) -> None:
+        for child in self._boxes_list.get_children():
+            self._boxes_list.remove(child)
+        # This machine is always watched and cannot be removed, so it is
+        # shown for completeness rather than as a configurable entry.
+        self._add_box_row(None, "This machine")
+        for dest in self._boxes:
+            self._add_box_row(dest, dest)
+        self._boxes_list.show_all()
+        self._remove_box_btn.set_sensitive(bool(self._boxes))
+
+    def _add_box_row(self, dest: str | None, label: str) -> None:
+        row = Gtk.ListBoxRow()
+        row.dest = dest  # type: ignore[attr-defined]
+        hb = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        for setter in ("top", "bottom", "start", "end"):
+            getattr(hb, f"set_margin_{setter}")(6)
+        name = Gtk.Label(xalign=0.0, label=label)
+        hb.pack_start(name, True, True, 0)
+        status = Gtk.Label(xalign=1.0)
+        status.set_markup("<small>checking…</small>")
+        hb.pack_start(status, False, False, 0)
+        row.add(hb)
+        self._boxes_list.add(row)
+
+        def done(state: str, detail: str) -> None:
+            if status.get_parent() is not None:
+                status.set_markup(box_dialog.status_markup(state, detail))
+
+        box_dialog.probe_async(dest, done)
+
+    def _on_add_box(self) -> None:
+        dialog = box_dialog.AddBoxDialog(self)
+        try:
+            if dialog.run() == Gtk.ResponseType.OK:
+                dest = dialog.get_dest()
+                if dest and dest not in self._boxes:
+                    self._boxes.append(dest)
+                    self._rebuild_boxes()
+        finally:
+            dialog.destroy()
+
+    def _on_remove_box(self) -> None:
+        row = self._boxes_list.get_selected_row()
+        dest = getattr(row, "dest", None) if row is not None else None
+        if dest is None:  # "This machine", or nothing selected
+            return
+        self._boxes = [d for d in self._boxes if d != dest]
+        self._rebuild_boxes()
+
     def get_settings(self) -> Settings:
         theme_key = next(
             (k for k, b in self._theme_buttons.items() if b.get_active()),
@@ -217,6 +307,7 @@ class SettingsDialog(Gtk.Dialog):
             sort_kind=self._current.sort_kind,
             mouse_mode="tmux" if self._mouse_tmux.get_active() else "vte",
             fix_contrast=self._fix_contrast_check.get_active(),
+            boxes=list(self._boxes),
         ).clamp()
 
 
