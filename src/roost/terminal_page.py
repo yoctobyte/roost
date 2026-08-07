@@ -59,12 +59,24 @@ class TerminalPage(Gtk.Box):
         self._vte.grab_focus()
         return False
 
-    def apply_theme(self, fg_hex: str, bg_hex: str) -> None:
+    def apply_theme(
+        self,
+        fg_hex: str,
+        bg_hex: str,
+        palette_hex: tuple[str, ...] | None = None,
+    ) -> None:
         fg = Gdk.RGBA()
         fg.parse(fg_hex)
         bg = Gdk.RGBA()
         bg.parse(bg_hex)
-        self._vte.set_colors(fg, bg, None)
+        palette = None
+        if palette_hex:
+            palette = []
+            for hex_color in palette_hex:
+                rgba = Gdk.RGBA()
+                rgba.parse(hex_color)
+                palette.append(rgba)
+        self._vte.set_colors(fg, bg, palette)
 
     def _on_key_press(self, _widget, event) -> bool:
         ctrl = bool(event.state & Gdk.ModifierType.CONTROL_MASK)

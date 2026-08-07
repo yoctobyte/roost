@@ -3,6 +3,8 @@ import os
 import zlib
 from dataclasses import asdict, dataclass, field, fields
 
+from roost import palette
+
 
 @dataclass
 class Theme:
@@ -50,6 +52,7 @@ DEFAULT_SORT_KIND = "folder"
 SORT_KINDS = ("folder", "name", "app", "color", "age")
 DEFAULT_MOUSE_MODE = "vte"
 MOUSE_MODES = ("vte", "tmux")
+DEFAULT_FIX_CONTRAST = True
 
 
 @dataclass
@@ -72,6 +75,10 @@ class Settings:
     #         scroll wheel goes to tmux directly. Selection is captured
     #         to a tmux buffer; copy via right-click "Copy".
     mouse_mode: str = DEFAULT_MOUSE_MODE
+    # Remap the terminal's indexed colors so every one of them stays
+    # readable against the theme background. Trades ANSI fidelity for
+    # legibility -- the point is monitoring processes, not rendering.
+    fix_contrast: bool = DEFAULT_FIX_CONTRAST
 
     def clamp(self) -> "Settings":
         size = max(MIN_FONT_SIZE, min(MAX_FONT_SIZE, int(self.overview_font_size)))
@@ -94,10 +101,17 @@ class Settings:
             mouse_mode=(
                 self.mouse_mode if self.mouse_mode in MOUSE_MODES else DEFAULT_MOUSE_MODE
             ),
+            fix_contrast=bool(self.fix_contrast),
         )
 
     def theme_obj(self) -> Theme:
         return THEMES[self.theme if self.theme in THEMES else DEFAULT_THEME]
+
+    def terminal_palette(self) -> tuple[str, ...] | None:
+        """Palette to hand VTE, or None to keep its built-in one."""
+        if not self.fix_contrast:
+            return None
+        return palette.fixed_palette(self.theme_obj().bg)
 
     def resolve_tab_color(self, cwd: str) -> TabColor | None:
         if not cwd:

@@ -158,7 +158,9 @@ class MainWindow(Gtk.ApplicationWindow):
             on_child_exited=self._on_terminal_child_exited,
         )
         theme = self._settings.theme_obj()
-        self._terminal.apply_theme(theme.fg, theme.bg)
+        self._terminal.apply_theme(
+            theme.fg, theme.bg, self._settings.terminal_palette()
+        )
         self._stack.add_named(self._terminal, _STACK_TERMINAL)
 
         self._show_overview()
@@ -284,7 +286,9 @@ class MainWindow(Gtk.ApplicationWindow):
     def _apply_settings(self) -> None:
         self._overview.apply_settings(self._settings)
         theme = self._settings.theme_obj()
-        self._terminal.apply_theme(theme.fg, theme.bg)
+        self._terminal.apply_theme(
+            theme.fg, theme.bg, self._settings.terminal_palette()
+        )
         self._controller.remember_tabs = self._settings.remember_tabs
         self._apply_status_bar()
         self._apply_mouse_mode()

@@ -56,6 +56,26 @@ class SettingsDialog(Gtk.Dialog):
             self._theme_buttons[key] = btn
             theme_box.pack_start(btn, False, False, 0)
 
+        self._fix_contrast_check = Gtk.CheckButton(
+            label="Fix unreadable colors"
+        )
+        self._fix_contrast_check.set_active(current.fix_contrast)
+        box.add(self._fix_contrast_check)
+
+        contrast_explain = Gtk.Label(xalign=0.0)
+        contrast_explain.set_line_wrap(True)
+        contrast_explain.set_max_width_chars(60)
+        contrast_explain.set_markup(
+            "<small>"
+            "Programs pick colors assuming a black background, so some "
+            "of them vanish on other themes (dark blue on brown, bright "
+            "yellow on cream). When on, such colors are lightened or "
+            "darkened just enough to stay readable, keeping their hue. "
+            "Turn off for exact ANSI colors."
+            "</small>"
+        )
+        box.add(contrast_explain)
+
         box.add(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
 
         color_section = Gtk.Label(xalign=0.0)
@@ -196,6 +216,7 @@ class SettingsDialog(Gtk.Dialog):
             show_status_bar=self._status_bar_check.get_active(),
             sort_kind=self._current.sort_kind,
             mouse_mode="tmux" if self._mouse_tmux.get_active() else "vte",
+            fix_contrast=self._fix_contrast_check.get_active(),
         ).clamp()
 
 
