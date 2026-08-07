@@ -28,6 +28,19 @@ class Controller:
         # Whether to persist session snapshots. Main window flips this
         # from Settings after construction.
         self.remember_tabs = True
+        # The snapshot as it was on disk before we touched anything.
+        # Read here, at construction, because start() creates the tmux
+        # session and syncs -- which would otherwise overwrite the file
+        # with the fresh empty session before anyone offered to restore
+        # from it.
+        self.previous_snapshot = state_mod.load()
+        # Saving stays off until the restore offer has been resolved, so
+        # a crash snapshot survives long enough to be acted on.
+        self._snapshots_armed = False
+        # window id -> (command, cwd it was launched from). Carried
+        # across polls so a window sitting idle at a prompt still knows
+        # what it last ran.
+        self._command_memory: dict[str, tuple[str, str]] = {}
 
     @property
     def session(self) -> str:
@@ -53,6 +66,17 @@ class Controller:
     def was_fresh_start(self) -> bool:
         return self._was_fresh
 
+    def arm_snapshots(self) -> None:
+        """Allow snapshots to be written from now on.
+
+        Called once the restore offer has been resolved -- until then a
+        write would destroy the very state the offer is made from.
+        """
+        if self._snapshots_armed:
+            return
+        self._snapshots_armed = True
+        self._maybe_save_snapshot(self._state)
+
     def stop(self) -> None:
         if self._poll_source is not None:
             GLib.source_remove(self._poll_source)
@@ -69,7 +93,17 @@ class Controller:
         selected = self._state.selected_id
         if selected is not None and not any(w.id == selected for w in windows):
             selected = None
+        self._remember_commands(windows)
         self._set_state(AppState(windows=tuple(windows), selected_id=selected))
+
+    def _remember_commands(self, windows) -> None:
+        live = set()
+        for w in windows:
+            live.add(w.id)
+            if w.last_command:
+                self._command_memory[w.id] = (w.last_command, w.current_path)
+        for stale in [k for k in self._command_memory if k not in live]:
+            del self._command_memory[stale]
 
     def new_console(self, name: str | None = None) -> None:
         try:
@@ -205,7 +239,7 @@ class Controller:
                 wid = tmux_adapter.new_window(
                     self._session,
                     name=w.name or None,
-                    cwd=w.cwd or None,
+                    cwd=w.restore_cwd() or None,
                 )
             except TmuxError as exc:
                 self._emit_error(str(exc))
@@ -224,9 +258,11 @@ class Controller:
         self._maybe_save_snapshot(state)
 
     def _maybe_save_snapshot(self, state: AppState) -> None:
-        if not self.remember_tabs:
+        if not self.remember_tabs or not self._snapshots_armed:
             return
-        snap = state_mod.build_snapshot(self._session, state.windows)
+        snap = state_mod.build_snapshot(
+            self._session, state.windows, self._command_memory
+        )
         key = state_mod.change_key(snap.windows)
         if key == self._snapshot_key:
             return

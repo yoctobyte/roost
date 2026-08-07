@@ -38,9 +38,9 @@ class RestoreDialog(Gtk.Dialog):
         info = Gtk.Label(
             label=(
                 "Pick the tabs you want to recreate. Each tab opens in "
-                "its saved working directory. If a command was running, "
-                "it is placed on the shell prompt — not executed — so "
-                "you can press Enter to re-run or edit it first."
+                "the directory its last command was run from. That "
+                "command is placed on the shell prompt — not executed — "
+                "so you can press Enter to re-run or edit it first."
             ),
             xalign=0.0,
         )
@@ -73,18 +73,25 @@ class RestoreDialog(Gtk.Dialog):
             markup_parts = [
                 f"<b>{GLib.markup_escape_text(w.name or '(unnamed)')}</b>"
             ]
-            if w.cwd:
+            restore_cwd = w.restore_cwd()
+            if restore_cwd:
                 markup_parts.append(
-                    f"<small>{GLib.markup_escape_text(w.cwd)}</small>"
+                    f"<small>{GLib.markup_escape_text(restore_cwd)}</small>"
                 )
             if w.last_command:
                 markup_parts.append(
                     f"<tt>{GLib.markup_escape_text(w.last_command)}</tt>"
                 )
-            elif w.current_command:
+                # The shell may have moved on after the command finished;
+                # say so, since we reopen where the command was launched.
+                if w.cwd and w.cwd != restore_cwd:
+                    markup_parts.append(
+                        f"<small><i>tab had since moved to "
+                        f"{GLib.markup_escape_text(w.cwd)}</i></small>"
+                    )
+            else:
                 markup_parts.append(
-                    f"<small><i>idle — was running "
-                    f"{GLib.markup_escape_text(w.current_command)}</i></small>"
+                    "<small><i>no command recorded — opens a shell</i></small>"
                 )
             text.set_markup("\n".join(markup_parts))
             hb.pack_start(text, True, True, 0)

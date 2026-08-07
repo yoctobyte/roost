@@ -650,13 +650,23 @@ class MainWindow(Gtk.ApplicationWindow):
         if self._restore_offered:
             return False
         self._restore_offered = True
+        try:
+            self._offer_restore()
+        finally:
+            # Whatever happened above, snapshots must start being written
+            # again -- the controller holds them back until this point so
+            # that startup cannot overwrite the state we just offered.
+            self._controller.arm_snapshots()
+        return False
+
+    def _offer_restore(self) -> None:
         if not self._controller.was_fresh_start:
-            return False
+            return
         if not self._settings.remember_tabs:
-            return False
-        snap = state_module.load()
+            return
+        snap = self._controller.previous_snapshot
         if snap is None or not snap.windows:
-            return False
+            return
         dialog = RestoreDialog(self, snap)
         try:
             response = dialog.run()
@@ -666,7 +676,6 @@ class MainWindow(Gtk.ApplicationWindow):
                     self._controller.restore_windows(selected)
         finally:
             dialog.destroy()
-        return False
 
     def _on_destroy(self, _widget) -> None:
         self._controller.stop()
