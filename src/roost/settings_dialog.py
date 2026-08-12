@@ -20,16 +20,26 @@ class SettingsDialog(Gtk.Dialog):
         self.add_button("Cancel", Gtk.ResponseType.CANCEL)
         self.add_button("Apply", Gtk.ResponseType.OK)
         self.set_default_response(Gtk.ResponseType.OK)
-        self.set_default_size(520, -1)
+        self.set_default_size(900, -1)
 
         self._current = current
 
-        box = self.get_content_area()
-        box.set_spacing(14)
-        box.set_margin_top(14)
-        box.set_margin_bottom(14)
-        box.set_margin_start(16)
-        box.set_margin_end(16)
+        content = self.get_content_area()
+        content.set_margin_top(14)
+        content.set_margin_bottom(14)
+        content.set_margin_start(16)
+        content.set_margin_end(16)
+
+        columns = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=24)
+        columns.set_homogeneous(True)
+        content.add(columns)
+
+        box = _column(columns)
+        right = _column(columns)
+
+        appearance_section = Gtk.Label(xalign=0.0)
+        appearance_section.set_markup("<b>Appearance</b>")
+        box.add(appearance_section)
 
         grid = Gtk.Grid()
         grid.set_row_spacing(10)
@@ -66,7 +76,7 @@ class SettingsDialog(Gtk.Dialog):
 
         contrast_explain = Gtk.Label(xalign=0.0)
         contrast_explain.set_line_wrap(True)
-        contrast_explain.set_max_width_chars(60)
+        contrast_explain.set_max_width_chars(46)
         contrast_explain.set_markup(
             "<small>"
             "Programs pick colors assuming a black background, so some "
@@ -78,15 +88,13 @@ class SettingsDialog(Gtk.Dialog):
         )
         box.add(contrast_explain)
 
-        box.add(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
-
         boxes_section = Gtk.Label(xalign=0.0)
         boxes_section.set_markup("<b>Boxes</b>")
-        box.add(boxes_section)
+        right.add(boxes_section)
 
         boxes_explain = Gtk.Label(xalign=0.0)
         boxes_explain.set_line_wrap(True)
-        boxes_explain.set_max_width_chars(60)
+        boxes_explain.set_max_width_chars(46)
         boxes_explain.set_markup(
             "<small>"
             "Other machines to watch, reached over ssh. Each box shows "
@@ -95,14 +103,14 @@ class SettingsDialog(Gtk.Dialog):
             "— roost only lists what is already there."
             "</small>"
         )
-        box.add(boxes_explain)
+        right.add(boxes_explain)
 
         self._boxes: list[str] = list(current.boxes)
         self._boxes_list = Gtk.ListBox()
         self._boxes_list.set_selection_mode(Gtk.SelectionMode.SINGLE)
         boxes_frame = Gtk.Frame()
         boxes_frame.add(self._boxes_list)
-        box.add(boxes_frame)
+        right.add(boxes_frame)
 
         boxes_buttons = Gtk.Box(
             orientation=Gtk.Orientation.HORIZONTAL, spacing=6
@@ -113,7 +121,7 @@ class SettingsDialog(Gtk.Dialog):
         self._remove_box_btn = Gtk.Button(label="Remove")
         self._remove_box_btn.connect("clicked", lambda *_: self._on_remove_box())
         boxes_buttons.pack_start(self._remove_box_btn, False, False, 0)
-        box.add(boxes_buttons)
+        right.add(boxes_buttons)
 
         self._rebuild_boxes()
 
@@ -131,7 +139,7 @@ class SettingsDialog(Gtk.Dialog):
 
         color_explain = Gtk.Label(xalign=0.0)
         color_explain.set_line_wrap(True)
-        color_explain.set_max_width_chars(60)
+        color_explain.set_max_width_chars(46)
         color_explain.set_markup(
             "<small>"
             "When on, each tab gets a pastel color derived from its "
@@ -144,21 +152,21 @@ class SettingsDialog(Gtk.Dialog):
         )
         box.add(color_explain)
 
-        box.add(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
+        right.add(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
 
         status_section = Gtk.Label(xalign=0.0)
         status_section.set_markup("<b>tmux status bar</b>")
-        box.add(status_section)
+        right.add(status_section)
 
         self._status_bar_check = Gtk.CheckButton(
             label="Show the green tmux status bar at the bottom"
         )
         self._status_bar_check.set_active(current.show_status_bar)
-        box.add(self._status_bar_check)
+        right.add(self._status_bar_check)
 
         status_explain = Gtk.Label(xalign=0.0)
         status_explain.set_line_wrap(True)
-        status_explain.set_max_width_chars(60)
+        status_explain.set_max_width_chars(46)
         status_explain.set_markup(
             "<small>"
             "tmux normally draws a status line along the bottom of the "
@@ -169,13 +177,13 @@ class SettingsDialog(Gtk.Dialog):
             "(activity flags, prefix-key feedback, etc.)."
             "</small>"
         )
-        box.add(status_explain)
+        right.add(status_explain)
 
-        box.add(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
+        right.add(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
 
         mouse_section = Gtk.Label(xalign=0.0)
         mouse_section.set_markup("<b>Mouse mode</b>")
-        box.add(mouse_section)
+        right.add(mouse_section)
 
         self._mouse_vte = Gtk.RadioButton.new_with_label_from_widget(
             None, "VTE selection (recommended)"
@@ -187,12 +195,12 @@ class SettingsDialog(Gtk.Dialog):
             self._mouse_tmux.set_active(True)
         else:
             self._mouse_vte.set_active(True)
-        box.add(self._mouse_vte)
-        box.add(self._mouse_tmux)
+        right.add(self._mouse_vte)
+        right.add(self._mouse_tmux)
 
         mouse_explain = Gtk.Label(xalign=0.0)
         mouse_explain.set_line_wrap(True)
-        mouse_explain.set_max_width_chars(60)
+        mouse_explain.set_max_width_chars(46)
         mouse_explain.set_markup(
             "<small>"
             "<b>VTE selection</b> lets you click-drag to select text the "
@@ -206,7 +214,7 @@ class SettingsDialog(Gtk.Dialog):
             "highlight; copy via the right-click menu instead."
             "</small>"
         )
-        box.add(mouse_explain)
+        right.add(mouse_explain)
 
         box.add(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
 
@@ -222,7 +230,7 @@ class SettingsDialog(Gtk.Dialog):
 
         explain = Gtk.Label(xalign=0.0)
         explain.set_line_wrap(True)
-        explain.set_max_width_chars(60)
+        explain.set_max_width_chars(46)
         explain.set_markup(
             "<small>"
             "When enabled (default), roost records each tab's name, current "
@@ -310,6 +318,13 @@ class SettingsDialog(Gtk.Dialog):
             fix_contrast=self._fix_contrast_check.get_active(),
             boxes=list(self._boxes),
         ).clamp()
+
+
+def _column(parent: Gtk.Box) -> Gtk.Box:
+    """One settings column: sections stacked, packed side by side."""
+    col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
+    parent.pack_start(col, True, True, 0)
+    return col
 
 
 def _label(text: str) -> Gtk.Label:
