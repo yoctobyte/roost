@@ -68,6 +68,11 @@ class Controller:
         # which would freeze the GUI if it ran on the main loop.
         self._poll_thread: threading.Thread | None = None
         self._stopped = False
+        # Called with (dest, session) right after roost creates a
+        # session, so the window can stamp its tmux options (status bar,
+        # mouse mode) onto it. A session that appears any other way is
+        # somebody else's and is left exactly as it is.
+        self.on_session_created: Callable[[str | None, str], None] | None = None
 
     @property
     def session(self) -> str:
@@ -233,6 +238,7 @@ class Controller:
         except TmuxError as exc:
             self._emit_error(str(exc))
             return
+        self._session_created(dest, candidate)
         self.sync_now(dest)
         for w in self._state.windows:
             if w.dest == dest and w.session == candidate:
@@ -474,6 +480,7 @@ class Controller:
         try:
             if not tmux_adapter.session_exists(self._session):
                 tmux_adapter.create_session(self._session)
+                self._session_created(None, self._session)
         except TmuxError as exc:
             self._emit_error(str(exc))
             return
@@ -493,6 +500,10 @@ class Controller:
                 except TmuxError:
                     pass
         self.sync_now(None)
+
+    def _session_created(self, dest: str | None, session: str) -> None:
+        if self.on_session_created is not None:
+            self.on_session_created(dest, session)
 
     def _set_state(self, state: AppState) -> None:
         self._state = state

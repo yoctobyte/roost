@@ -53,7 +53,7 @@ def create_session(name: str, dest: str | None = None, cwd: str | None = None) -
     return _run(args, dest).strip()
 
 
-def set_mouse_mode(session: str, on: bool) -> None:
+def set_mouse_mode(session: str, on: bool, dest: str | None = None) -> None:
     """Toggle tmux session-scoped mouse mode.
 
     With mouse on, tmux owns drag selection and the wheel scrolls
@@ -71,7 +71,10 @@ def set_mouse_mode(session: str, on: bool) -> None:
     mouse drag — which never happens when mouse mode is off.
     """
     try:
-        _run(["set-option", "-t", session, "mouse", "on" if on else "off"])
+        _run(
+            ["set-option", "-t", session, "mouse", "on" if on else "off"],
+            dest,
+        )
     except TmuxError:
         pass
     if on:
@@ -86,7 +89,8 @@ def set_mouse_mode(session: str, on: bool) -> None:
                         "send-keys",
                         "-X",
                         "copy-selection-no-clear",
-                    ]
+                    ],
+                    dest,
                 )
             except TmuxError:
                 pass
@@ -297,8 +301,11 @@ def scroll_copy_mode_down(session: str) -> bool:
     return True
 
 
-def set_status_bar(session: str, on: bool) -> None:
-    _run(["set-option", "-t", session, "status", "on" if on else "off"])
+def set_status_bar(session: str, on: bool, dest: str | None = None) -> None:
+    _run(
+        ["set-option", "-t", session, "status", "on" if on else "off"],
+        dest,
+    )
 
 
 def rename_window(window_id: str, name: str, dest: str | None = None) -> None:

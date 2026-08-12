@@ -34,7 +34,7 @@ class MainWindow(Gtk.ApplicationWindow):
         self._settings: Settings = settings_module.load()
         self._controller.remember_tabs = self._settings.remember_tabs
         self._controller.set_boxes(self._settings.boxes)
-        self._apply_status_bar()
+        self._controller.on_session_created = self._apply_session_options
         self._session_lost_shown = False
         self._window_buttons: dict[str, Gtk.ToggleButton] = {}
         self._button_css: dict[str, Gtk.CssProvider] = {}
@@ -376,7 +376,6 @@ class MainWindow(Gtk.ApplicationWindow):
             )
         self._controller.remember_tabs = self._settings.remember_tabs
         self._controller.set_boxes(self._settings.boxes)
-        self._apply_status_bar()
         self._apply_mouse_mode()
         self._refresh_all_tab_colors()
         if not self._settings.remember_tabs:
@@ -385,22 +384,35 @@ class MainWindow(Gtk.ApplicationWindow):
             except OSError:
                 pass
 
-    def _apply_status_bar(self) -> None:
+    def _apply_mouse_mode(self) -> None:
+        self._apply_session_options(None, self._controller.session)
+        intercept = self._settings.mouse_mode != "tmux"
+        for page in self._terminals.values():
+            page.set_intercept_scroll(intercept)
+
+    def _apply_session_options(self, dest: str | None, session: str) -> None:
+        """Stamp the tmux options roost owns onto one session.
+
+        Called for the roost session on startup and again whenever roost
+        creates a session -- at startup there may well be no session to
+        set them on yet (restoring a saved layout makes one afterwards),
+        and options set on a session that does not exist are simply
+        lost, which is how a restored session came up with tmux's
+        defaults instead: green status bar showing, and the wheel left
+        to VTE, which turns it into arrow keys for full-screen apps.
+        """
         try:
             tmux_adapter.set_status_bar(
-                self._controller.session, self._settings.show_status_bar
+                session, self._settings.show_status_bar, dest
             )
         except tmux_adapter.TmuxError:
             pass
-
-    def _apply_mouse_mode(self) -> None:
-        on = self._settings.mouse_mode == "tmux"
         try:
-            tmux_adapter.set_mouse_mode(self._controller.session, on)
+            tmux_adapter.set_mouse_mode(
+                session, self._settings.mouse_mode == "tmux", dest
+            )
         except tmux_adapter.TmuxError:
             pass
-        for page in self._terminals.values():
-            page.set_intercept_scroll(not on)
 
     def _action_rename(self) -> None:
         win = self._controller.selected_window()
