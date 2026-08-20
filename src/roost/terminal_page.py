@@ -10,7 +10,7 @@ gi.require_version("Vte", "2.91")
 
 from gi.repository import Gdk, GLib, Gtk, Vte  # noqa: E402
 
-from roost import ssh, tmux_adapter  # noqa: E402
+from roost import links, ssh, tmux_adapter  # noqa: E402
 
 
 class TerminalPage(Gtk.Box):
@@ -30,6 +30,12 @@ class TerminalPage(Gtk.Box):
         self._vte = Vte.Terminal()
         self._vte.set_scrollback_lines(10000)
         self._vte.set_mouse_autohide(True)
+        # OSC 8 links, for the programs that bother to emit them.
+        try:
+            self._vte.set_allow_hyperlink(True)
+        except (AttributeError, TypeError):
+            pass
+        self._add_link_matcher()
 
         self.pack_start(self._vte, True, True, 0)
 
@@ -161,6 +167,73 @@ class TerminalPage(Gtk.Box):
         except tmux_adapter.TmuxError:
             return False
 
+    def _add_link_matcher(self) -> None:
+        """Let VTE underline links and show a pointer on hover.
+
+        This only ever matches within one VTE row (plus soft-wrapped
+        continuations), which covers a full-width pane. Split panes are
+        handled at click time by asking tmux -- see _link_at_event.
+        """
+        try:
+            regex = Vte.Regex.new_for_match(
+                links.VTE_PATTERN,
+                -1,
+                links.PCRE2_MULTILINE | links.PCRE2_CASELESS,
+            )
+            tag = self._vte.match_add_regex(regex, 0)
+            self._vte.match_set_cursor_name(tag, "pointer")
+        except (AttributeError, TypeError, GLib.Error):
+            # Hover decoration is a nicety; the context menu is the
+            # feature. An old or differently-built VTE loses only this.
+            pass
+
+    def _link_at_event(self, event) -> str | None:
+        """Best-effort URL under the pointer, or None.
+
+        Three sources, most trustworthy first: an explicit OSC 8
+        hyperlink, then tmux (which knows where it wrapped a line, and
+        which pane owns the cell), then VTE's own matcher as a fallback
+        for anything tmux would not answer for.
+        """
+        try:
+            uri = self._vte.hyperlink_check_event(event)
+            if uri:
+                return uri
+        except (AttributeError, TypeError):
+            pass
+
+        char_w = self._vte.get_char_width() or 1
+        char_h = self._vte.get_char_height() or 1
+        col = int(event.x // char_w)
+        row = int(event.y // char_h)
+        try:
+            found = tmux_adapter.url_at_cell(
+                self._session, col, row, self._dest
+            )
+            if found:
+                return found
+        except tmux_adapter.TmuxError:
+            pass
+
+        try:
+            match = self._vte.match_check_event(event)
+            if match and match[0]:
+                return match[0]
+        except (AttributeError, TypeError):
+            pass
+        return None
+
+    def _open_url(self, url: str) -> None:
+        url = links.normalize(url)
+        if not links.is_openable(url):
+            return
+        try:
+            Gtk.show_uri_on_window(
+                self.get_toplevel(), url, Gdk.CURRENT_TIME
+            )
+        except GLib.Error:
+            pass
+
     def _on_button_press(self, _widget, event) -> bool:
         if event.type != Gdk.EventType.BUTTON_PRESS:
             return False
@@ -171,6 +244,24 @@ class TerminalPage(Gtk.Box):
 
     def _show_context_menu(self, event) -> None:
         menu = Gtk.Menu()
+
+        url = self._link_at_event(event)
+        if url and links.is_openable(links.normalize(url)):
+            shown = url if len(url) <= 48 else url[:45] + "\u2026"
+            open_item = Gtk.MenuItem(label=f"Open {shown}")
+            open_item.connect("activate", lambda *_: self._open_url(url))
+            menu.append(open_item)
+
+            copy_link = Gtk.MenuItem(label="Copy Link Address")
+            copy_link.connect(
+                "activate",
+                lambda *_: (
+                    _write_clipboard_text(Gdk.SELECTION_CLIPBOARD, url),
+                    _write_clipboard_text(Gdk.SELECTION_PRIMARY, url),
+                ),
+            )
+            menu.append(copy_link)
+            menu.append(Gtk.SeparatorMenuItem())
 
         copy_item = Gtk.MenuItem(label="Copy")
         # In tmux selection mode the selection lives in a tmux buffer,

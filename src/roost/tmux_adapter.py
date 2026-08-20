@@ -463,3 +463,100 @@ def _parse_batch(out: str, nonce: str, dest: str | None = None) -> list[WindowIn
             )
         )
     return windows
+
+
+def url_at_cell(
+    session: str,
+    col: int,
+    row: int,
+    dest: str | None = None,
+) -> str | None:
+    """Return the URL displayed at a cell of the session's window.
+
+    (col, row) are cells of the attached client's screen, counting from
+    the top-left of the window -- which is what a click in the VTE grid
+    gives us. We ask tmux which pane owns that cell, capture that pane
+    alone, and let links.find_url rebuild any line tmux wrapped.
+
+    Returns None when the cell is in no pane (the status bar, a pane
+    divider), when nothing there looks like a URL, or when tmux will not
+    answer. Callers treat every failure the same way: no link, no menu
+    entry.
+    """
+    from roost import links
+
+    # pane_top counts from the top of the *window*, which sits one row
+    # down when the status line is at the top. Without this the whole
+    # grid is off by one and clicks land in the wrong pane.
+    try:
+        status = _run(
+            ["display-message", "-p", "-t", session,
+             "#{status} #{status-position}"],
+            dest,
+        ).split()
+    except TmuxError:
+        status = []
+    if len(status) == 2 and status[0] != "off" and status[1] == "top":
+        row -= 1
+        if row < 0:
+            return None
+
+    try:
+        listing = _run(
+            [
+                "list-panes",
+                "-t",
+                session,
+                "-F",
+                "#{pane_id} #{pane_left} #{pane_top} #{pane_width} "
+                "#{pane_height} #{pane_in_mode} #{scroll_position}",
+            ],
+            dest,
+        )
+    except TmuxError:
+        return None
+
+    for line in listing.splitlines():
+        parts = line.split()
+        if len(parts) < 6:
+            continue
+        pane_id, left, top, width, height, in_mode = parts[:6]
+        scroll = parts[6] if len(parts) > 6 else ""
+        try:
+            left_i, top_i = int(left), int(top)
+            width_i, height_i = int(width), int(height)
+        except ValueError:
+            continue
+        if not (left_i <= col < left_i + width_i):
+            continue
+        if not (top_i <= row < top_i + height_i):
+            continue
+
+        args = ["capture-pane", "-p", "-t", pane_id]
+        # In copy-mode the pane shows history, not the live screen, so a
+        # plain capture would return text the user is not looking at.
+        # scroll_position counts lines scrolled back from the bottom.
+        if in_mode == "1" and scroll.isdigit() and int(scroll) > 0:
+            back = int(scroll)
+            args = [
+                "capture-pane",
+                "-p",
+                "-S",
+                str(-back),
+                "-E",
+                str(height_i - 1 - back),
+                "-t",
+                pane_id,
+            ]
+        try:
+            out = _run(args, dest)
+        except TmuxError:
+            return None
+        # capture-pane trims trailing blanks per row, which is exactly
+        # what links.find_url needs to tell a wrapped row from a short
+        # one. splitlines() would also drop a trailing empty row, so
+        # keep_ends is avoided and the list is used as-is.
+        rows = out.split("\n")
+        return links.find_url(rows, width_i, row - top_i, col - left_i)
+
+    return None
