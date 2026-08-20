@@ -251,6 +251,12 @@ def enter_copy_mode_up(session: str) -> bool:
     full-screen TUI app like vim/htop/claude is running. Those apps
     own PgUp themselves; intervening leaves the cursor mis-positioned
     after copy-mode exits.
+
+    Enters with -e so that scrolling back down to the live screen
+    leaves copy-mode on its own. Without it tmux parks at the bottom
+    of the history and the pane stays inert until something dismisses
+    it -- Escape, or a click on window managers where clicks reach
+    tmux at all. -e makes the wheel round-trip symmetric.
     """
     try:
         out = _run(
@@ -266,7 +272,7 @@ def enter_copy_mode_up(session: str) -> bool:
         out = "0"
     if out == "1":
         return False
-    _run(["copy-mode", "-u", "-t", session])
+    _run(["copy-mode", "-e", "-u", "-t", session])
     return True
 
 
