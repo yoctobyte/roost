@@ -194,6 +194,7 @@ class Controller:
             if session is None:
                 tmux_adapter.create_session(self._session, dest)
                 session = self._session
+                self._session_created(dest, session)
                 wid = tmux_adapter.new_window(session, name=name, dest=dest) if name else None
                 if wid is None:
                     self.sync_now(dest)

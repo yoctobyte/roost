@@ -96,10 +96,15 @@ def set_mouse_mode(session: str, on: bool, dest: str | None = None) -> None:
                 pass
 
 
-def show_buffer() -> str:
-    """Return the most recent tmux buffer text, or empty string."""
+def show_buffer(dest: str | None = None) -> str:
+    """Return the most recent tmux buffer text, or empty string.
+
+    Buffers are per-server, so the destination matters: a tab on
+    another box selects into *that* box's buffer stack, and reading
+    the local one would hand back whatever was last copied here.
+    """
     try:
-        return _run(["show-buffer"])
+        return _run(["show-buffer"], dest)
     except TmuxError:
         return ""
 
@@ -243,7 +248,7 @@ def send_text(window_id: str, text: str, dest: str | None = None) -> None:
     _run(["send-keys", "-t", window_id, "-l", text], dest)
 
 
-def enter_copy_mode_up(session: str) -> bool:
+def enter_copy_mode_up(session: str, dest: str | None = None) -> bool:
     """Enter copy-mode in the session's active pane and scroll up one page.
 
     Returns True if copy-mode was triggered. Returns False (and does
@@ -266,17 +271,18 @@ def enter_copy_mode_up(session: str) -> bool:
                 "-t",
                 session,
                 "#{alternate_on}",
-            ]
+            ],
+            dest,
         ).strip()
     except TmuxError:
         out = "0"
     if out == "1":
         return False
-    _run(["copy-mode", "-e", "-u", "-t", session])
+    _run(["copy-mode", "-e", "-u", "-t", session], dest)
     return True
 
 
-def scroll_copy_mode_down(session: str) -> bool:
+def scroll_copy_mode_down(session: str, dest: str | None = None) -> bool:
     """If the active pane is in copy-mode, scroll it down half a page.
 
     Returns True if a scroll was sent. Does nothing (and returns False)
@@ -290,7 +296,8 @@ def scroll_copy_mode_down(session: str) -> bool:
                 "-t",
                 session,
                 "#{alternate_on} #{pane_in_mode}",
-            ]
+            ],
+            dest,
         ).strip()
     except TmuxError:
         return False
@@ -301,7 +308,7 @@ def scroll_copy_mode_down(session: str) -> bool:
     if alt == "1" or in_mode != "1":
         return False
     try:
-        _run(["send-keys", "-t", session, "-X", "halfpage-down"])
+        _run(["send-keys", "-t", session, "-X", "halfpage-down"], dest)
     except TmuxError:
         return False
     return True

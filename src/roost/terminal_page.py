@@ -121,7 +121,9 @@ class TerminalPage(Gtk.Box):
         # natively; outside copy-mode the application receives it.
         if event.keyval == Gdk.KEY_Page_Up and not (ctrl or shift):
             try:
-                handled = tmux_adapter.enter_copy_mode_up(self._session)
+                handled = tmux_adapter.enter_copy_mode_up(
+                    self._session, self._dest
+                )
             except tmux_adapter.TmuxError:
                 return False
             return handled
@@ -157,13 +159,15 @@ class TerminalPage(Gtk.Box):
 
     def _scroll_up(self) -> bool:
         try:
-            return tmux_adapter.enter_copy_mode_up(self._session)
+            return tmux_adapter.enter_copy_mode_up(self._session, self._dest)
         except tmux_adapter.TmuxError:
             return False
 
     def _scroll_down(self) -> bool:
         try:
-            return tmux_adapter.scroll_copy_mode_down(self._session)
+            return tmux_adapter.scroll_copy_mode_down(
+                self._session, self._dest
+            )
         except tmux_adapter.TmuxError:
             return False
 
@@ -294,8 +298,14 @@ class TerminalPage(Gtk.Box):
             if text is not None:
                 _write_clipboard_text(Gdk.SELECTION_PRIMARY, text)
             return
+        if self._intercept_scroll:
+            # VTE selection mode: the selection is VTE's, and there
+            # isn't one. Falling through to a tmux buffer here would
+            # replace the clipboard with whatever was last copied
+            # anywhere on that server -- so copy nothing instead.
+            return
         # tmux selection mode: pull the most recent tmux buffer.
-        text = tmux_adapter.show_buffer()
+        text = tmux_adapter.show_buffer(self._dest)
         if not text:
             return
         _write_clipboard_text(Gdk.SELECTION_CLIPBOARD, text)

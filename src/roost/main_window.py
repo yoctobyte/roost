@@ -37,6 +37,9 @@ class MainWindow(Gtk.ApplicationWindow):
         self._controller.on_session_created = self._apply_session_options
         self._session_lost_shown = False
         self._window_buttons: dict[str, Gtk.ToggleButton] = {}
+        # (dest, session) pairs whose tmux mouse option already matches
+        # the current setting, so opening a tab does not re-ask tmux.
+        self._mouse_stamped: set[tuple[str | None, str]] = set()
         self._button_css: dict[str, Gtk.CssProvider] = {}
         self._updating_buttons = False
         self._restore_offered = False
@@ -45,6 +48,7 @@ class MainWindow(Gtk.ApplicationWindow):
         self._build_body()
         self._build_accelerators()
         self._apply_mouse_mode()
+        self._apply_status_bar()
 
         controller.on_state_changed(self._on_state_changed)
         controller.on_error(self._on_error)
@@ -185,6 +189,7 @@ class MainWindow(Gtk.ApplicationWindow):
                 theme.fg, theme.bg, self._settings.terminal_palette()
             )
             page.set_intercept_scroll(self._settings.mouse_mode != "tmux")
+            self._stamp_mouse_mode(dest, session)
             self._terminals[(dest, session)] = page
             self._stack.add_named(page, _terminal_name(dest, session))
             page.show_all()
@@ -377,6 +382,7 @@ class MainWindow(Gtk.ApplicationWindow):
         self._controller.remember_tabs = self._settings.remember_tabs
         self._controller.set_boxes(self._settings.boxes)
         self._apply_mouse_mode()
+        self._apply_status_bar()
         self._refresh_all_tab_colors()
         if not self._settings.remember_tabs:
             try:
@@ -385,10 +391,60 @@ class MainWindow(Gtk.ApplicationWindow):
                 pass
 
     def _apply_mouse_mode(self) -> None:
-        self._apply_session_options(None, self._controller.session)
+        """Make the mouse-mode setting true of every session on screen.
+
+        tmux's `mouse` is a per-session option, and a user's tmux.conf
+        may well turn it on globally. roost now shows sessions it never
+        created, on boxes it never set up, so stamping only its own
+        session left every other tab with tmux owning the drag -- and
+        with tmux owning the drag, VTE never gets a selection, which
+        leaves Ctrl+Shift+C and the Copy menu item with nothing to copy.
+        """
+        self._mouse_stamped.clear()
+        for dest, session in self._sessions_on_screen():
+            self._stamp_mouse_mode(dest, session)
         intercept = self._settings.mouse_mode != "tmux"
         for page in self._terminals.values():
             page.set_intercept_scroll(intercept)
+
+    def _apply_status_bar(self) -> None:
+        """Re-apply the status-bar setting to roost's own session.
+
+        Only roost's own: a session somebody else started is theirs to
+        dress, and the status bar is cosmetic. Mouse mode is not -- see
+        _apply_mouse_mode.
+        """
+        try:
+            tmux_adapter.set_status_bar(
+                self._controller.session, self._settings.show_status_bar
+            )
+        except tmux_adapter.TmuxError:
+            pass
+
+    def _sessions_on_screen(self) -> list[tuple[str | None, str]]:
+        """Every (box, session) roost has a terminal open on, plus its own.
+
+        Open tabs only, not every session the overview lists: mouse
+        mode is a real change to somebody else's session, and roost
+        makes it only where it is the thing displaying the session.
+        Its own is always included -- it is where a first tab lands.
+        """
+        sources = list(self._terminals.keys())
+        own = (None, self._controller.session)
+        if own not in sources:
+            sources.append(own)
+        return sources
+
+    def _stamp_mouse_mode(self, dest: str | None, session: str) -> None:
+        if (dest, session) in self._mouse_stamped:
+            return
+        self._mouse_stamped.add((dest, session))
+        try:
+            tmux_adapter.set_mouse_mode(
+                session, self._settings.mouse_mode == "tmux", dest
+            )
+        except tmux_adapter.TmuxError:
+            pass
 
     def _apply_session_options(self, dest: str | None, session: str) -> None:
         """Stamp the tmux options roost owns onto one session.
@@ -407,12 +463,8 @@ class MainWindow(Gtk.ApplicationWindow):
             )
         except tmux_adapter.TmuxError:
             pass
-        try:
-            tmux_adapter.set_mouse_mode(
-                session, self._settings.mouse_mode == "tmux", dest
-            )
-        except tmux_adapter.TmuxError:
-            pass
+        self._mouse_stamped.discard((dest, session))
+        self._stamp_mouse_mode(dest, session)
 
     def _action_rename(self) -> None:
         win = self._controller.selected_window()
