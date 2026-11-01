@@ -109,6 +109,9 @@ class Settings:
     # readable against the theme background. Trades ANSI fidelity for
     # legibility -- the point is monitoring processes, not rendering.
     fix_contrast: bool = DEFAULT_FIX_CONTRAST
+    # Whether the Status tab (boxes + remembered Claude sessions) sits in
+    # the tab strip. Toggled from the header bar, not the dialog.
+    show_status_tab: bool = False
 
     def clamp(self) -> "Settings":
         size = max(MIN_FONT_SIZE, min(MAX_FONT_SIZE, int(self.overview_font_size)))
@@ -133,6 +136,7 @@ class Settings:
             ),
             fix_contrast=bool(self.fix_contrast),
             boxes=_clean_boxes(self.boxes),
+            show_status_tab=bool(self.show_status_tab),
         )
 
     def theme_obj(self) -> Theme:

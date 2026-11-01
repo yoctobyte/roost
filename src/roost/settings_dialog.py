@@ -317,6 +317,7 @@ class SettingsDialog(Gtk.Dialog):
             mouse_mode="tmux" if self._mouse_tmux.get_active() else "vte",
             fix_contrast=self._fix_contrast_check.get_active(),
             boxes=list(self._boxes),
+            show_status_tab=self._current.show_status_tab,
         ).clamp()
 
 

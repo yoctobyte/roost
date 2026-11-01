@@ -16,11 +16,13 @@ from roost.restore_dialog import RestoreDialog
 from roost.settings import TAB_COLORS, Settings, project_root
 from roost import box_dialog
 from roost.settings_dialog import SettingsDialog
+from roost.status_page import StatusPage
 from roost.terminal_page import TerminalPage
 
 _TAB_DND_TARGET = "application/x-roost-tab"
 
 _STACK_OVERVIEW = "overview"
+_STACK_STATUS = "status"
 def _terminal_name(dest, session: str) -> str:
     return f"term\x1f{dest or ''}\x1f{session}"
 
@@ -43,6 +45,9 @@ class MainWindow(Gtk.ApplicationWindow):
         self._button_css: dict[str, Gtk.CssProvider] = {}
         self._updating_buttons = False
         self._restore_offered = False
+        # The Status tab is showing (it, like Overview, has no window
+        # selected, so the selection alone cannot tell them apart).
+        self._status_visible = False
 
         self._build_header()
         self._build_body()
@@ -87,6 +92,20 @@ class MainWindow(Gtk.ApplicationWindow):
             "view-grid-symbolic", "Show overview", self._action_overview
         )
         header.pack_start(self._btn_overview)
+
+        self._btn_status = Gtk.ToggleButton()
+        self._btn_status.set_image(
+            Gtk.Image.new_from_icon_name(
+                "dialog-information-symbolic", Gtk.IconSize.BUTTON
+            )
+        )
+        self._btn_status.set_tooltip_text(
+            "Status tab: boxes, and Claude sessions to restore"
+        )
+        self._btn_status.set_can_focus(False)
+        self._btn_status.set_active(self._settings.show_status_tab)
+        self._btn_status.connect("toggled", self._on_status_header_toggled)
+        header.pack_start(self._btn_status)
 
         self._btn_rename = _hbtn(
             "document-edit-symbolic", "Rename current", self._action_rename
@@ -160,12 +179,34 @@ class MainWindow(Gtk.ApplicationWindow):
         )
         self._tab_strip.add(self._overview_button)
 
+        self._status_button = Gtk.ToggleButton(label="Status")
+        self._status_button.set_tooltip_text(
+            "Boxes, and Claude sessions to restore"
+        )
+        self._status_button.set_can_focus(False)
+        self._status_button.connect("toggled", self._on_status_button_toggled)
+        self._tab_strip.add(self._status_button)
+        # Hidden or shown only by the header toggle -- the strip's own
+        # show_all() on every rebuild must leave it alone.
+        for widget in (self._status_button, self._status_button.get_parent()):
+            if widget is not self._tab_strip:
+                widget.set_no_show_all(True)
+
         self._stack = Gtk.Stack()
         self._stack.set_transition_type(Gtk.StackTransitionType.NONE)
         outer.pack_start(self._stack, True, True, 0)
 
         self._overview = OverviewPage(self._on_card_activated, self._settings)
         self._stack.add_named(self._overview, _STACK_OVERVIEW)
+
+        self._status_page = StatusPage(
+            self._settings,
+            on_restore=self._on_restore_claude,
+            on_forget=self._on_forget_claude,
+            on_show=self._on_show_claude,
+        )
+        self._stack.add_named(self._status_page, _STACK_STATUS)
+        self._apply_status_tab_visibility()
 
         # A VTE can only be attached to one tmux session, so each
         # (box, session) gets its own page, built the first time a tab
@@ -374,6 +415,7 @@ class MainWindow(Gtk.ApplicationWindow):
 
     def _apply_settings(self) -> None:
         self._overview.apply_settings(self._settings)
+        self._status_page.apply_settings(self._settings)
         theme = self._settings.theme_obj()
         for page in self._terminals.values():
             page.apply_theme(
@@ -516,8 +558,88 @@ class MainWindow(Gtk.ApplicationWindow):
         self._rebuild_window_buttons(state)
         selected = state.by_key(state.selected_id) if state.selected_id else None
         self._sync_button_state(selected)
+        self._update_status_label()
         if selected is None:
+            if self._status_visible:
+                self._refresh_status_page()
+            else:
+                self._show_overview()
+
+    # -- status tab -------------------------------------------------------
+
+    def _on_status_header_toggled(self, button: Gtk.ToggleButton) -> None:
+        on = button.get_active()
+        if on != self._settings.show_status_tab:
+            self._settings.show_status_tab = on
+            settings_module.save(self._settings)
+        self._apply_status_tab_visibility()
+        if on:
+            self._show_status()
+        elif self._status_visible:
             self._show_overview()
+
+    def _apply_status_tab_visibility(self) -> None:
+        on = self._settings.show_status_tab
+        for widget in (self._status_button, self._status_button.get_parent()):
+            if widget is not self._tab_strip:
+                widget.set_visible(on)
+
+    def _on_status_button_toggled(self, button: Gtk.ToggleButton) -> None:
+        if self._updating_buttons:
+            return
+        if button.get_active():
+            self._show_status()
+        elif self._status_visible:
+            self._updating_buttons = True
+            button.set_active(True)
+            self._updating_buttons = False
+
+    def _show_status(self) -> None:
+        self._status_visible = True
+        if self._controller.state.selected_id is not None:
+            self._controller.clear_selection()
+        self._refresh_status_page()
+        self._stack.set_visible_child_name(_STACK_STATUS)
+        self._updating_buttons = True
+        self._overview_button.set_active(False)
+        self._status_button.set_active(True)
+        for btn in self._window_buttons.values():
+            btn.set_active(False)
+        self._updating_buttons = False
+
+    def _refresh_status_page(self) -> None:
+        self._controller.refresh_claudes()
+        history = self._controller.claude_history
+        shown = {
+            (w.session, w.id)
+            for w in self._controller.state.windows
+            if w.dest is None
+        }
+        self._status_page.refresh(
+            self._controller.box_status(), history.sorted(), history.live, shown
+        )
+
+    def _update_status_label(self) -> None:
+        offline = sum(
+            1 for _d, ok, _e, _s in self._controller.box_status() if ok is False
+        )
+        label = f"Status · {offline} offline" if offline else "Status"
+        if self._status_button.get_label() != label:
+            self._status_button.set_label(label)
+
+    def _on_restore_claude(self, record) -> None:
+        self._controller.restore_claude(record)
+        self._refresh_status_page()
+
+    def _on_forget_claude(self, session_id: str) -> None:
+        self._controller.claude_history.forget(session_id)
+        self._refresh_status_page()
+
+    def _on_show_claude(self, session: str, window_id: str) -> None:
+        for w in self._controller.state.windows:
+            if w.dest is None and w.session == session and w.id == window_id:
+                self._on_card_activated(w.key)
+                return
 
     def _rebuild_window_buttons(self, state: AppState) -> None:
         new_ids = [w.key for w in state.windows]
@@ -566,16 +688,23 @@ class MainWindow(Gtk.ApplicationWindow):
     def _sync_button_state(self, selected: WindowInfo | None) -> None:
         self._updating_buttons = True
         try:
-            self._overview_button.set_active(selected is None)
+            self._overview_button.set_active(
+                selected is None and not self._status_visible
+            )
+            self._status_button.set_active(
+                selected is None and self._status_visible
+            )
             for wid, btn in self._window_buttons.items():
                 btn.set_active(selected is not None and wid == selected.key)
         finally:
             self._updating_buttons = False
 
     def _show_overview(self) -> None:
+        self._status_visible = False
         self._stack.set_visible_child_name(_STACK_OVERVIEW)
         self._updating_buttons = True
         self._overview_button.set_active(True)
+        self._status_button.set_active(False)
         for btn in self._window_buttons.values():
             btn.set_active(False)
         self._updating_buttons = False
@@ -585,6 +714,7 @@ class MainWindow(Gtk.ApplicationWindow):
         if win is None:
             self._show_overview()
             return
+        self._status_visible = False
         page = self._terminal_for(win.dest, win.session)
         self._stack.set_visible_child_name(_terminal_name(win.dest, win.session))
         page.grab_focus()

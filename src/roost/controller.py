@@ -8,6 +8,7 @@ gi.require_version("Gtk", "3.0")
 
 from gi.repository import GLib  # noqa: E402
 
+from roost import claude_sessions
 from roost import state as state_mod
 from roost import tmux_adapter
 from roost.config import POLL_INTERVAL_MS, PREVIEW_LINES, SESSION_NAME
@@ -33,13 +34,15 @@ class Controller:
         self._dest = dest
         # Boxes to poll. None is this machine, which is always watched.
         self._boxes: list[str | None] = [None]
-        # Destinations that failed their last poll, so the error is
-        # reported once rather than every 1.5 seconds.
-        self._reported_offline: set[str | None] = set()
         # A box that failed is not retried until this time. Without it a
         # single unreachable machine burns the whole connect timeout on
         # every poll, forever.
         self._retry_after: dict[str | None, float] = {}
+        # dest -> (reachable, last error, since when). Shown on the Status
+        # tab instead of raising a dialog every time a box drops off.
+        self._box_status: dict[str | None, tuple[bool, str, float]] = {}
+        # Claude Code sessions on this machine, live and remembered.
+        self.claude_history = claude_sessions.SessionHistory()
         self._state = AppState()
         self._state_listeners: list[StateListener] = []
         self._error_listeners: list[ErrorListener] = []
@@ -91,6 +94,22 @@ class Controller:
     def set_boxes(self, boxes) -> None:
         """Destinations to watch besides this machine."""
         self._boxes = [None] + [b for b in boxes if b]
+
+    def box_status(self) -> list[tuple[str | None, bool | None, str, float]]:
+        """(dest, reachable or None if not polled yet, error, since)."""
+        out = []
+        for dest in self._boxes:
+            ok, err, since = self._box_status.get(dest, (None, "", 0.0))
+            out.append((dest, ok, err, since))
+        return out
+
+    def _note_box(self, dest: str | None, ok: bool, err: str = "") -> None:
+        prev = self._box_status.get(dest)
+        if prev is not None and prev[0] == ok:
+            if not ok:
+                self._box_status[dest] = (ok, err or prev[1], prev[2])
+            return
+        self._box_status[dest] = (ok, err, time.time())
 
     def start(self) -> None:
         # Connecting must never change a box: roost lists what is
@@ -148,7 +167,9 @@ class Controller:
         try:
             fresh = tmux_adapter.fetch_box(dest, PREVIEW_LINES)
         except TmuxError as exc:
-            return kept, [f"{dest or 'this machine'}: {exc}"]
+            self._note_box(dest, False, _first_line(exc))
+            return kept, []
+        self._note_box(dest, True)
         return kept + fresh, []
 
     def _apply_windows(self, windows) -> None:
@@ -218,7 +239,7 @@ class Controller:
         return list(self._boxes)
 
     def is_offline(self, dest: str | None) -> bool:
-        return dest in self._reported_offline
+        return self._box_status.get(dest, (True,))[0] is False
 
     def new_session(self, dest: str | None = None, name: str | None = None) -> None:
         """Start a session on a box, and select it.
@@ -441,23 +462,27 @@ class Controller:
             try:
                 windows.extend(tmux_adapter.fetch_box(dest, PREVIEW_LINES))
             except TmuxError as exc:
+                # An unreachable box is a status, not an error: it goes on
+                # the Status tab rather than into a modal dialog, which
+                # used to pop up for every known box that was switched off.
                 self._retry_after[dest] = now + OFFLINE_RETRY_SECONDS
-                if dest not in self._reported_offline:
-                    self._reported_offline.add(dest)
-                    errors.append(f"{dest or 'this machine'}: {exc}")
+                self._note_box(dest, False, _first_line(exc))
                 continue
             self._retry_after.pop(dest, None)
-            self._reported_offline.discard(dest)
+            self._note_box(dest, True)
         return windows, errors
 
     def _poll_worker(self) -> None:
         windows, errors = self._fetch_all()
-        GLib.idle_add(self._deliver_windows, windows, errors)
+        claudes = claude_sessions.registry_entries()
+        GLib.idle_add(self._deliver_windows, windows, errors, claudes)
 
-    def _deliver_windows(self, windows, errors=()) -> bool:
+    def _deliver_windows(self, windows, errors=(), claudes=None) -> bool:
         # Back on the main thread: safe to touch state and widgets.
         if self._stopped:
             return False
+        if claudes is not None:
+            self.claude_history.update(claudes)
         self._apply_windows(windows)
         for message in errors:
             self._emit_error(message)
@@ -468,6 +493,31 @@ class Controller:
             return False
         self._emit_error(message)
         return False
+
+    def refresh_claudes(self) -> None:
+        """Re-read the local registry now; a few small files, no ssh."""
+        self.claude_history.update(claude_sessions.registry_entries())
+
+    def restore_claude(self, record) -> None:
+        """Bring an ended Claude session back in a new local tab, running.
+
+        Unlike the reboot offer this does press Enter: the user clicked
+        Restore on that one session, which is the confirmation.
+        """
+        try:
+            if not tmux_adapter.session_exists(self._session):
+                tmux_adapter.create_session(self._session)
+                self._session_created(None, self._session)
+            wid = tmux_adapter.new_window(
+                self._session,
+                name=record.name or None,
+                cwd=record.cwd or None,
+            )
+            tmux_adapter.send_text(wid, record.command, enter=True)
+        except TmuxError as exc:
+            self._emit_error(str(exc))
+            return
+        self.sync_now(None)
 
     def restore_windows(self, entries) -> None:
         """Recreate the given windows on this machine.
@@ -530,3 +580,9 @@ class Controller:
     def _emit_error(self, message: str) -> None:
         for listener in list(self._error_listeners):
             listener(message)
+
+
+def _first_line(exc: Exception) -> str:
+    """The useful part of a failed poll: ssh's own last word on it."""
+    text = (getattr(exc, "stderr", "") or str(exc)).strip()
+    return text.splitlines()[-1] if text else str(exc)

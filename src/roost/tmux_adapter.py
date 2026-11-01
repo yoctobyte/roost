@@ -241,11 +241,15 @@ def new_window(
     return _run(args, dest).strip()
 
 
-def send_text(window_id: str, text: str, dest: str | None = None) -> None:
-    """Send literal text to a window's foreground pane. No Enter."""
+def send_text(
+    window_id: str, text: str, dest: str | None = None, enter: bool = False
+) -> None:
+    """Send literal text to a window's foreground pane; Enter only if asked."""
     if not text:
         return
     _run(["send-keys", "-t", window_id, "-l", text], dest)
+    if enter:
+        _run(["send-keys", "-t", window_id, "Enter"], dest)
 
 
 def enter_copy_mode_up(session: str, dest: str | None = None) -> bool:
