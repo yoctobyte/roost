@@ -12,6 +12,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Sequence
 
+from roost import claude_sessions
 from roost.models import WindowInfo
 
 SCHEMA_VERSION = 2
@@ -70,9 +71,17 @@ def build_snapshot(
     still records what it last ran.
     """
     remembered = remembered or {}
+    claudes = claude_sessions.live_sessions()
     saved = []
     for w in windows:
         command, command_cwd = remembered.get(w.id, ("", ""))
+        live = (
+            claudes.get((w.session or session, w.id)) if w.dest is None else None
+        )
+        if live is not None:
+            sid, claude_cwd, argv = live
+            command = claude_sessions.resume_command(argv, sid)
+            command_cwd = claude_cwd or command_cwd
         saved.append(
             SavedWindow(
                 index=w.index,
